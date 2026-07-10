@@ -268,6 +268,12 @@ function App() {
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
+                <div className="flex items-center gap-3 mt-6 text-xs text-gray-500">
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 bg-orange-500 rounded-sm"></div>
+                      <span className="font-medium text-gray-700">Найбільша кількість годин</span>
+                    </div>
+                </div>
               </div>
 
               {pivotState && (
