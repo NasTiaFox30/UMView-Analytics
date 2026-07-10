@@ -4,15 +4,13 @@ import { UploadCloud, Clock, Calendar, TrendingUp, LayoutDashboard, Calculator }
 import ModelSimulator from './ModelSimulator';
 
 function App() {
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'simulator'
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [data, setData] = useState([]);
   const [summary, setSummary] = useState({ totalHours: 0, activeDays: 0, avgHours: 0 });
   const [weeklyStats, setWeeklyStats] = useState([]);
   const [maxHoursVal, setMaxHoursVal] = useState(0);
   const [maxDayDate, setMaxDayDate] = useState(null);
-  
   const [monthAreas, setMonthAreas] = useState([]); 
-  
   const [pivotState, setPivotState] = useState(null);
 
   const handleFileUpload = (e) => {
@@ -37,24 +35,22 @@ function App() {
       let maxH = 0;
       let maxDate = null;
 
-      const daysTotals = { 'Пн': 0, 'Вт': 0, 'Ср': 0, 'Чт': 0, 'Пт': 0, 'Сб': 0, 'Нд': 0 };
-      const dayNames = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-      const monthNames = ['Січень', 'Лютий', 'Березень', 'Квітень', 'Травень', 'Червень', 'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень'];
+      const daysTotals = { 'Pn': 0, 'Wt': 0, 'Śr': 0, 'Cz': 0, 'Pt': 0, 'Sb': 0, 'Nd': 0 };
+      const dayNames = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb'];
+      const monthNames = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
       
-      // За замовчуванням старі індекси (для першого файлу)
       let dataIdx = 5;
       let hoursIdx = 6;
       let reasonIdx = 7;
 
-      // Читаємо перший непустий рядок (заголовки) і шукаємо реальні позиції
       const headerLine = lines.find(l => l.trim().length > 0);
       if (headerLine) {
         const headers = headerLine.split(';').map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
         const hIdx = headers.indexOf('godziny');
         if (hIdx !== -1) {
           hoursIdx = hIdx;
-          dataIdx = hIdx - 1; // Data завжди перед Godziny
-          reasonIdx = hIdx + 1; // Komentarz/Powód завжди після Godziny
+          dataIdx = hIdx - 1; 
+          reasonIdx = hIdx + 1; 
         }
       }
 
@@ -62,12 +58,10 @@ function App() {
         if (!lines[i].trim()) continue;
         const columns = lines[i].split(';').map(cell => cell.replace(/^"|"$/g, '').trim());
         
-        // Використовуємо динамічні індекси замість жорстких 5, 6, 7
         const dateStr = columns[dataIdx];
         const hoursStr = columns[hoursIdx];
         const reason = columns[reasonIdx];
 
-        // "Razem" — підсумковий рядок в кінці звіту, його пропускаємо
         if (!dateStr || dateStr.toLowerCase() === 'data' || dateStr.toLowerCase() === 'razem' || !hoursStr) continue;
 
         const hours = parseFloat(hoursStr.replace(',', '.')) || 0;
@@ -93,7 +87,6 @@ function App() {
         formattedData.push({ date: dateStr, hours, reason, monthStr, dayName: dayNameStr, dateObj });
       }
 
-      // Сортування за реальною датою (раніше dateObj не існував — сортування було нейтральним, тепер працює навіть якщо рядки у файлі йдуть не по порядку)
       formattedData.sort((a, b) => (a.dateObj?.getTime() || 0) - (b.dateObj?.getTime() || 0));
 
       const mAreas = [];
@@ -128,7 +121,7 @@ function App() {
       const activeMonths = monthNames.filter(m => activeMonthsSet.has(m)); 
 
       const pivot = {};
-      const rowOrder = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Нд'];
+      const rowOrder = ['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'];
       rowOrder.forEach(day => {
         pivot[day] = { total: 0 };
         activeMonths.forEach(m => pivot[day][m] = 0);
@@ -174,7 +167,7 @@ function App() {
         maxColTotal 
       });
 
-      const order = { 'Пн': 1, 'Вт': 2, 'Ср': 3, 'Чт': 4, 'Пт': 5, 'Сб': 6, 'Нд': 7 };
+      const order = { 'Pn': 1, 'Wt': 2, 'Śr': 3, 'Cz': 4, 'Pt': 5, 'Sb': 6, 'Nd': 7 };
       const weeklyArray = Object.keys(daysTotals)
         .map(day => ({ day, hours: parseFloat(daysTotals[day].toFixed(2)) }))
         .sort((a, b) => order[a.day] - order[b.day]);
@@ -217,7 +210,7 @@ function App() {
         <header className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div>
             <h1 className="text-lg font-bold text-gray-800 leading-tight">UMView Analytics</h1>
-            <p className="text-gray-500 text-[11px] mt-0.5">Дашборд оптимізації тестових середовищ</p>
+            <p className="text-gray-500 text-[11px] mt-0.5">Dashboard optymalizacji środowisk testowych</p>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex bg-gray-100 rounded-lg p-1">
@@ -225,18 +218,18 @@ function App() {
                 onClick={() => setActiveTab('dashboard')}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition ${activeTab === 'dashboard' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                <LayoutDashboard size={14} /> Дашборд
+                <LayoutDashboard size={14} /> Dashboard
               </button>
               <button
                 onClick={() => setActiveTab('simulator')}
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition ${activeTab === 'simulator' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                <Calculator size={14} /> Симулятор
+                <Calculator size={14} /> Symulator
               </button>
             </div>
             <label className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-lg cursor-pointer hover:bg-blue-700 transition font-medium text-xs">
               <UploadCloud size={16} />
-              <span>Завантажити CSV</span>
+              <span>Prześlij CSV</span>
               <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
             </label>
           </div>
@@ -250,7 +243,7 @@ function App() {
             <div className="flex-1 space-y-4">
               
               <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                <h2 className="text-[13px] font-semibold text-gray-800 mb-3">Тенденція навантаження на сервер</h2>
+                <h2 className="text-[13px] font-semibold text-gray-800 mb-3">Trend obciążenia serwera</h2>
                 <div className="h-52 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={data} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
@@ -278,7 +271,7 @@ function App() {
                       <YAxis stroke="#9ca3af" fontSize={10} tickLine={false} axisLine={false} />
                       <Tooltip contentStyle={{ backgroundColor: '#1f2937', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '11px' }} />
                       
-                      <Bar dataKey="hours" name="Робочі години" radius={[4, 4, 0, 0]}>
+                      <Bar dataKey="hours" name="Godziny pracy" radius={[4, 4, 0, 0]}>
                         {data.map((entry, index) => (
                           <Cell 
                             key={`cell-${index}`} 
@@ -292,20 +285,19 @@ function App() {
                 <div className="flex items-center gap-2 mt-3 text-[10px] text-gray-500">
                     <div className="flex items-center gap-1">
                       <div className="w-2.5 h-2.5 bg-orange-500 rounded-sm"></div>
-                      <span className="font-medium text-gray-700">Найбільша кількість годин</span>
+                      <span className="font-medium text-gray-700">Największa liczba godzin</span>
                     </div>
                   </div>
               </div>
 
               {pivotState && (
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
-                  <h2 className="text-[13px] font-semibold text-gray-800 mb-3">Матриця навантаження (Дні vs Місяці)</h2>
+                  <h2 className="text-[13px] font-semibold text-gray-800 mb-3">Macierz obciążenia (Dni vs Miesiące)</h2>
                   
-                  {/* Компактна таблиця */}
                   <table className="w-full text-[11px] text-left border-collapse">
                     <thead>
                       <tr className="bg-gray-50 text-gray-600">
-                        <th className="p-1.5 border border-gray-200 font-semibold text-gray-500">День \ Місяць</th>
+                        <th className="p-1.5 border border-gray-200 font-semibold text-gray-500">Dzień \ Miesiąc</th>
                         {pivotState.months.map(m => (
                           <th key={m} className="p-1.5 border border-gray-200 font-semibold text-center">{m}</th>
                         ))}
@@ -366,39 +358,38 @@ function App() {
                   <div className="flex items-center gap-2 mt-3 text-[10px] text-gray-500">
                     <div className="flex items-center gap-1">
                       <div className="w-2.5 h-2.5 bg-orange-500 rounded-sm"></div>
-                      <span className="font-medium text-gray-700">Пікове навантаження</span>
+                      <span className="font-medium text-gray-700">Obciążenie szczytowe</span>
                     </div>
                     <div className="h-3 w-px bg-gray-300 mx-1"></div>
-                    <span>Менше</span>
+                    <span>Mniej</span>
                     <div className="w-2.5 h-2.5 bg-white border border-gray-200 rounded-sm"></div>
                     <div className="w-2.5 h-2.5 bg-blue-100 rounded-sm"></div>
                     <div className="w-2.5 h-2.5 bg-blue-400 rounded-sm"></div>
                     <div className="w-2.5 h-2.5 bg-blue-600 rounded-sm"></div>
                     <div className="w-2.5 h-2.5 bg-blue-800 rounded-sm"></div>
-                    <span>Більше</span>
+                    <span>Więcej</span>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Права колонка (Статистика) */}
             <div className="w-full lg:w-72 flex flex-col gap-4">
               
               <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Загальна стастика</h3>
+                <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Ogólne statystyki</h3>
                 <div className="space-y-3">
                   <div className="p-3 bg-blue-50 rounded-lg flex items-center gap-3">
                     <div className="p-1.5 bg-blue-500 text-white rounded-md"><Clock size={16} /></div>
                     <div>
-                      <p className="text-[10px] text-gray-500">Всього витрачено</p>
-                      <p className="text-lg font-bold text-blue-900 leading-tight">{summary.totalHours} год</p>
+                      <p className="text-[10px] text-gray-500">Całkowity czas</p>
+                      <p className="text-lg font-bold text-blue-900 leading-tight">{summary.totalHours} godz.</p>
                     </div>
                   </div>
                   <div className="p-3 bg-purple-50 rounded-lg flex items-center gap-3">
                     <div className="p-1.5 bg-purple-500 text-white rounded-md"><Calendar size={16} /></div>
                     <div>
-                      <p className="text-[10px] text-gray-500">Днів з тестами</p>
-                      <p className="text-lg font-bold text-purple-900 leading-tight">{summary.activeDays} днів</p>
+                      <p className="text-[10px] text-gray-500">Dni z testami</p>
+                      <p className="text-lg font-bold text-purple-900 leading-tight">{summary.activeDays} dni</p>
                     </div>
                   </div>
                 </div>
@@ -407,7 +398,7 @@ function App() {
               <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                 <div className="flex items-center gap-1.5 mb-3">
                   <TrendingUp size={14} className="text-gray-500" />
-                  <h3 className="text-[11px] font-semibold text-gray-700 uppercase tracking-wider">Профіль тижня</h3>
+                  <h3 className="text-[11px] font-semibold text-gray-700 uppercase tracking-wider">Profil tygodnia</h3>
                 </div>
                 
                 <div className="space-y-1.5">
@@ -420,7 +411,7 @@ function App() {
                         {stat.day} {stat.day === maxWeeklyDay && '🔥'}
                       </span>
                       <span className={`text-[11px] ${stat.day === maxWeeklyDay ? 'font-bold text-red-700' : 'text-gray-500'}`}>
-                        {stat.hours > 0 ? `${stat.hours} год` : '-'}
+                        {stat.hours > 0 ? `${stat.hours} godz.` : '-'}
                       </span>
                     </div>
                   ))}
@@ -432,8 +423,8 @@ function App() {
         ) : (
           <div className="bg-white p-12 rounded-xl shadow-sm border border-gray-100 text-center text-gray-400 flex flex-col items-center justify-center gap-2">
             <UploadCloud size={32} className="text-gray-300" />
-            <p className="font-medium text-gray-600 text-sm">Очікування тестового файлу...</p>
-            <p className="text-[11px] text-gray-400">Завантажте ваш CSV-файл для побудови дашборду.</p>
+            <p className="font-medium text-gray-600 text-sm">Oczekiwanie na plik testowy...</p>
+            <p className="text-[11px] text-gray-400">Prześlij swój plik CSV, aby zbudować dashboard.</p>
           </div>
         )}
       </div>
