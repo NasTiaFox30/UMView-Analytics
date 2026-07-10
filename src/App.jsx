@@ -4,6 +4,7 @@ import { UploadCloud, Clock, Calendar, AlertCircle, TrendingUp, LayoutDashboard,
 import ModelSimulator from './ModelSimulator';
 
 function App() {
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'simulator'
   const [data, setData] = useState([]);
   const [summary, setSummary] = useState({ totalHours: 0, activeDays: 0, avgHours: 0 });
   const [weeklyStats, setWeeklyStats] = useState([]);
@@ -66,16 +67,18 @@ function App() {
         const hoursStr = columns[hoursIdx];
         const reason = columns[reasonIdx];
 
+        // "Razem" — підсумковий рядок в кінці звіту, його пропускаємо
         if (!dateStr || dateStr.toLowerCase() === 'data' || dateStr.toLowerCase() === 'razem' || !hoursStr) continue;
 
         const hours = parseFloat(hoursStr.replace(',', '.')) || 0;
         
         let monthStr = '';
         let dayNameStr = '';
+        let dateObj = null;
         const dateParts = dateStr.split('.');
         
         if (dateParts.length === 3) {
-          const dateObj = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
+          dateObj = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
           dayNameStr = dayNames[dateObj.getDay()];
           daysTotals[dayNameStr] += hours;
           monthStr = monthNames[parseInt(dateParts[1], 10) - 1];
@@ -87,7 +90,7 @@ function App() {
           maxDate = dateStr;
         }
 
-        formattedData.push({ date: dateStr, hours, reason, monthStr, dayName: dayNameStr });
+        formattedData.push({ date: dateStr, hours, reason, monthStr, dayName: dayNameStr, dateObj });
       }
 
       // Сортування за реальною датою (раніше dateObj не існував — сортування було нейтральним, тепер працює навіть якщо рядки у файлі йдуть не по порядку)
@@ -188,7 +191,7 @@ function App() {
       });
     };
     
-    reader.readAsText(file, 'UTF-8');
+    reader.readAsArrayBuffer(file);
   };
 
   const maxWeeklyDay = useMemo(() => {
@@ -211,19 +214,37 @@ function App() {
     <div className="min-h-screen bg-gray-50 p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-6">
         
-        <header className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+        <header className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-800">UMView Analytics</h1>
             <p className="text-gray-500 text-sm mt-1">Дашборд оптимізації тестових середовищ</p>
           </div>
-          <label className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg cursor-pointer hover:bg-blue-700 transition font-medium">
-            <UploadCloud size={20} />
-            <span>Завантажити CSV</span>
-            <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
-          </label>
+          <div className="flex items-center gap-3">
+            <div className="flex bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${activeTab === 'dashboard' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                <LayoutDashboard size={15} /> Дашборд
+              </button>
+              <button
+                onClick={() => setActiveTab('simulator')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${activeTab === 'simulator' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                <Calculator size={15} /> Симулятор моделей
+              </button>
+            </div>
+            <label className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg cursor-pointer hover:bg-blue-700 transition font-medium">
+              <UploadCloud size={20} />
+              <span>Завантажити CSV</span>
+              <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+            </label>
+          </div>
         </header>
 
-        {data.length > 0 ? (
+        {activeTab === 'simulator' ? (
+          <ModelSimulator rawData={data} pivotState={pivotState} monthAreas={monthAreas} />
+        ) : data.length > 0 ? (
           <div className="flex flex-col lg:flex-row gap-6">
             
             <div className="flex-1 space-y-6">
@@ -273,7 +294,7 @@ function App() {
                       <div className="w-3 h-3 bg-orange-500 rounded-sm"></div>
                       <span className="font-medium text-gray-700">Найбільша кількість годин</span>
                     </div>
-                </div>
+                  </div>
               </div>
 
               {pivotState && (
