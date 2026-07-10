@@ -90,6 +90,9 @@ function App() {
         formattedData.push({ date: dateStr, hours, reason, monthStr, dayName: dayNameStr });
       }
 
+      // Сортування за реальною датою (раніше dateObj не існував — сортування було нейтральним, тепер працює навіть якщо рядки у файлі йдуть не по порядку)
+      formattedData.sort((a, b) => (a.dateObj?.getTime() || 0) - (b.dateObj?.getTime() || 0));
+
       const mAreas = [];
       let currentMonthStr = null;
       let startIdx = 0;
