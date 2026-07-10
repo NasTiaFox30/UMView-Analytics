@@ -20,7 +20,15 @@ function App() {
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const text = event.target.result;
+      const buffer = event.target.result;
+
+      let text;
+      try {
+        text = new TextDecoder('windows-1250').decode(buffer);
+      } catch (err) {
+        text = new TextDecoder('utf-8').decode(buffer);
+      }
+
       const lines = text.split(/\r?\n/);
       
       const formattedData = [];
