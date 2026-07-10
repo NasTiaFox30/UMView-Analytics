@@ -31,13 +31,31 @@ function App() {
       const dayNames = ['Нд', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
       const monthNames = ['Січень', 'Лютий', 'Березень', 'Квітень', 'Травень', 'Червень', 'Липень', 'Серпень', 'Вересень', 'Жовтень', 'Листопад', 'Грудень'];
       
+      // За замовчуванням старі індекси (для першого файлу)
+      let dataIdx = 5;
+      let hoursIdx = 6;
+      let reasonIdx = 7;
+
+      // Читаємо перший непустий рядок (заголовки) і шукаємо реальні позиції
+      const headerLine = lines.find(l => l.trim().length > 0);
+      if (headerLine) {
+        const headers = headerLine.split(';').map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
+        const hIdx = headers.indexOf('godziny');
+        if (hIdx !== -1) {
+          hoursIdx = hIdx;
+          dataIdx = hIdx - 1; // Data завжди перед Godziny
+          reasonIdx = hIdx + 1; // Komentarz/Powód завжди після Godziny
+        }
+      }
+
       for (let i = 1; i < lines.length; i++) {
         if (!lines[i].trim()) continue;
         const columns = lines[i].split(';').map(cell => cell.replace(/^"|"$/g, '').trim());
         
-        const dateStr = columns[5];
-        const hoursStr = columns[6];
-        const reason = columns[7];
+        // Використовуємо динамічні індекси замість жорстких 5, 6, 7
+        const dateStr = columns[dataIdx];
+        const hoursStr = columns[hoursIdx];
+        const reason = columns[reasonIdx];
 
         if (!dateStr || dateStr.toLowerCase() === 'data' || dateStr.toLowerCase() === 'razem' || !hoursStr) continue;
 
@@ -112,7 +130,7 @@ function App() {
 
       let maxGridVal = 0;
       let maxRowTotal = 0;
-      let maxColTotal = 0; // Нова змінна для пошуку найзавантаженішого місяця
+      let maxColTotal = 0; 
 
       rowOrder.forEach(day => {
         let rTotal = 0;
@@ -127,7 +145,6 @@ function App() {
         if (rTotal > maxRowTotal) maxRowTotal = rTotal; 
       });
 
-      // Знаходимо максимальне значення у нижньому рядку (по місяцях)
       activeMonths.forEach(m => {
         if (colTotals[m] > maxColTotal) maxColTotal = colTotals[m];
       });
@@ -139,7 +156,7 @@ function App() {
         colTotals,
         maxGridVal,
         maxRowTotal,
-        maxColTotal // Зберігаємо у стейт
+        maxColTotal 
       });
 
       const order = { 'Пн': 1, 'Вт': 2, 'Ср': 3, 'Чт': 4, 'Пт': 5, 'Сб': 6, 'Нд': 7 };
@@ -167,7 +184,6 @@ function App() {
     return [...weeklyStats].sort((a, b) => b.hours - a.hours)[0].day;
   }, [weeklyStats]);
 
-  // Оновлена функція: тепер приймає лише прапорець isHighlight
   const getPivotCellClass = (val, isHighlight) => {
     if (isHighlight) return 'bg-orange-500 text-white border-orange-600 shadow-inner font-bold';
     if (val === 0) return 'text-gray-300 bg-white';
@@ -261,7 +277,6 @@ function App() {
                         <tr key={day} className="hover:bg-gray-50 transition-colors">
                           <td className="p-3 border border-gray-200 font-medium text-gray-700 bg-gray-50">{day}</td>
                           
-                          {/* Внутрішні клітинки більше не підсвічуються оранжевим */}
                           {pivotState.months.map(m => {
                             const val = pivotState.data[day][m];
                             return (
@@ -274,7 +289,6 @@ function App() {
                             );
                           })}
                           
-                          {/* Колонка Razem (дні тижня) */}
                           {(() => {
                             const rTotal = pivotState.data[day].total;
                             const isMaxRowTotal = rTotal > 0 && rTotal === pivotState.maxRowTotal;
@@ -288,7 +302,6 @@ function App() {
                       ))}
                     </tbody>
                     <tfoot>
-                      {/* Нижній рядок Razem (місяці) */}
                       <tr className="bg-gray-50 font-bold text-gray-700">
                         <td className="p-3 border border-gray-200 text-gray-500 bg-gray-100">Razem</td>
                         {pivotState.months.map(m => {
