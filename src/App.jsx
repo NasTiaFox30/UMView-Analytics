@@ -201,7 +201,7 @@ function App() {
         
         <header className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">Cloud OptiDash 🚀</h1>
+            <h1 className="text-2xl font-bold text-gray-800">UMView Analytics</h1>
             <p className="text-gray-500 text-sm mt-1">Дашборд оптимізації тестових середовищ</p>
           </div>
           <label className="flex items-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg cursor-pointer hover:bg-blue-700 transition font-medium">
