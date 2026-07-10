@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, Cell } from 'recharts';
-import { UploadCloud, Clock, Calendar, AlertCircle, TrendingUp } from 'lucide-react';
+import { UploadCloud, Clock, Calendar, AlertCircle, TrendingUp, LayoutDashboard, Calculator } from 'lucide-react';
 import ModelSimulator from './ModelSimulator';
 
 function App() {
