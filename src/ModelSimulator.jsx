@@ -88,6 +88,13 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
     }, 0);
   }, [pivotState, cyclicDays, monthsCount]);
 
+  // Найдовша ОДНА реальна сесія в обрані дні тижня — місячна сума ховає цей ризик:
+  // вікно може "влазити" по сумі годин на місяць, але фізично обривати конкретну сесію.
+  const maxSingleSessionOnCyclicDays = useMemo(() => {
+    if (!rawData.length || cyclicDays.length === 0) return 0;
+    return rawData.reduce((max, d) => (cyclicDays.includes(d.dayName) && d.hours > max ? d.hours : max), 0);
+  }, [rawData, cyclicDays]);
+
   // ---- core cost model ----
   const calc = useMemo(() => {
     // Модель A
@@ -105,15 +112,20 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
     const marginalCostB = avgHoursPerActivationB * serverCostPerHour + (onDemandOverheadMin / 60) * testerCostPerHour;
 
     // Модель H (Оригінальна гібридна - A + екстрені переплати B)
-    const overflowActivations = Math.max(0, monthlyActivationsB - activationsA);
+    // Модель H (гібрид) — базова ємність (в годинах) переводиться в "еквівалент on-demand сесій",
+    // а не порівнюється напряму "штука до штуки" (бо тривалість вікна ≠ тривалості реальної сесії).
+    const baselineEquivalentActivations = avgHoursPerActivationB > 0 ? scheduledHoursA / avgHoursPerActivationB : 0;
+    const overflowActivations = Math.max(0, monthlyActivationsB - baselineEquivalentActivations);
     const overflowCostInfra = overflowActivations * avgHoursPerActivationB * serverCostPerHour;
     const overheadCostH = overflowActivations * (onDemandOverheadMin / 60) * testerCostPerHour;
     const costInfraH = costInfraA + overflowCostInfra;
     const totalCostH = costInfraH + overheadCostH;
 
-    // Модель S (Scale-to-Zero)
+    // Модель S (Scale-to-Zero) — авто-присинання on-demand сервера.
+    // Концептуально це варіант Моделі B, тому база — реальний обсяг on-demand роботи,
+    // а НЕ totalActualUsageOnCyclicDays (те залежить від чекбоксів Моделі A і не має стосунку до S).
     const scaleToZeroTimeoutHours = scaleToZeroTimeoutMin / 60;
-    const actualHoursBase = totalActualUsageOnCyclicDays > 0 ? totalActualUsageOnCyclicDays : (monthlyActivationsB * avgHoursPerActivationB);
+    const actualHoursBase = monthlyActivationsB * avgHoursPerActivationB;
     const costInfraS = actualHoursBase * serverCostPerHour;
     const wastedCostS = monthlyActivationsB * scaleToZeroTimeoutHours * serverCostPerHour; 
     const totalCostS = costInfraS + wastedCostS;
@@ -121,7 +133,7 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
     const breakEvenActivations = marginalCostB > 0 ? totalCostA / marginalCostB : null;
 
     return {
-      activationsA, costInfraA, wastedHoursA, wastedCostA, totalCostA,
+      activationsA, baselineEquivalentActivations, costInfraA, wastedHoursA, wastedCostA, totalCostA,
       costInfraB, overheadCostB, totalCostB, marginalCostB, breakEvenActivations,
       costInfraH, overheadCostH, totalCostH,
       costInfraS, wastedCostS, totalCostS, scaleToZeroTimeoutHours,
@@ -133,7 +145,7 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
     const maxX = Math.max(20, Math.ceil((calc.breakEvenActivations || 10) * 1.6), Math.ceil(monthlyActivationsB * 1.5));
     return Array.from({ length: maxX + 1 }, (_, x) => {
       
-      const overflow = Math.max(0, x - calc.activationsA);
+      const overflow = Math.max(0, x - calc.baselineEquivalentActivations);
       const costH = calc.totalCostA + overflow * calc.marginalCostB;
       const costS = (x * avgHoursPerActivationB + x * calc.scaleToZeroTimeoutHours) * serverCostPerHour;
 
@@ -164,20 +176,22 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
   
   const maxBarTotal = Math.max(calc.totalCostA, calc.totalCostB, calc.totalCostH, enableScaleToZero ? calc.totalCostS : 0, 1);
 
-  let cheaper = 'A';
-  let minCost = calc.totalCostA;
-
-  if (calc.totalCostB < minCost) {
-    cheaper = 'B';
-    minCost = calc.totalCostB;
-  }
-  if (calc.totalCostH < minCost) {
-    cheaper = 'H';
-    minCost = calc.totalCostH;
-  }
-  if (enableScaleToZero && calc.totalCostS < minCost) {
-    cheaper = 'S (Scale-to-Zero)';
-  }
+  const costs = { A: calc.totalCostA, B: calc.totalCostB, H: calc.totalCostH };
+  if (enableScaleToZero) costs.S = calc.totalCostS;
+  const sortedCosts = Object.entries(costs).sort((a, b) => a[1] - b[1]);
+  const cheaper = sortedCosts[0][0];
+  // Модель H часто математично збігається з A (коли база повністю покриває потребу — overflow=0).
+  // Порівнювати "економію" з таким двійником безглуздо (завжди 0 zł) — шукаємо наступну ЗНАЧУЩО іншу опцію.
+  const TIE_TOLERANCE_ZL = 0.5;
+  const nextDistinct = sortedCosts.slice(1).find(([, v]) => Math.abs(v - sortedCosts[0][1]) > TIE_TOLERANCE_ZL);
+  const diff = nextDistinct ? nextDistinct[1] - sortedCosts[0][1] : 0;
+  const diffPct = nextDistinct && nextDistinct[1] ? (diff / nextDistinct[1]) * 100 : 0;
+  const modelLabel = {
+    A: 'cykliczny (Model A)',
+    B: 'on-demand (Model B)',
+    H: 'hybrydowy (Model H)',
+    S: 'scale-to-zero (Model S)',
+  };
 
   return (
     <div className="space-y-4">
@@ -227,8 +241,18 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
 
               <NumberField label="Czas trwania okna" value={cyclicDurationHours} step={1} suffix="godz./dzień" onChange={setCyclicDurationHours} />
               <p className="text-[10px] text-gray-400 leading-tight mt-1">
-                Rzeczywiste użycie: <b>{totalActualUsageOnCyclicDays.toFixed(1)} godz.</b> z {calc.scheduledHoursA.toFixed(1)} godz.
+                Rzeczywiste użycie: <b>{totalActualUsageOnCyclicDays.toFixed(1)} godz.</b> z {calc.scheduledHoursA.toFixed(1)} godz. (suma miesięczna)
               </p>
+              {maxSingleSessionOnCyclicDays > cyclicDurationHours && (
+                <p className="text-[10px] text-red-500 leading-tight mt-1">
+                  ⚠ Najdłuższa pojedyncza sesja w te dni trwała <b>{maxSingleSessionOnCyclicDays.toFixed(1)} godz.</b> — okno {cyclicDurationHours} godz. by ją przerwało, mimo że suma miesięczna „się mieści".
+                </p>
+              )}
+              {cyclicDays.length === 0 && (
+                <p className="text-[10px] text-red-500 leading-tight mt-1">
+                  ⚠ Brak wybranych dni = Model A kosztuje 0 zł, bo serwer nigdy się nie uruchamia. To nie jest realny scenariusz — zaznacz co najmniej 1 dzień.
+                </p>
+              )}
             </div>
 
             <div className="pt-3 border-t border-gray-100">
@@ -287,6 +311,21 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
             )}
           </div>
 
+          <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl flex items-start gap-3">
+            <TrendingUp size={18} className="text-blue-600 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-blue-900">
+              {nextDistinct ? (
+                <> Przy obecnych założeniach najtańszy jest <b>{modelLabel[cheaper]}</b> — oszczędność ≈ <b>{fmtPLN(diff)}/mies.</b> względem następnej realnie innej opcji, <b>{modelLabel[nextDistinct[0]]}</b> ({diffPct.toFixed(0)}%).</>
+              ) : (
+                <> Przy obecnych założeniach wszystkie modele wychodzą praktycznie tak samo (różnica &lt; {TIE_TOLERANCE_ZL} zł) — wybór zależy od innych czynników niż czysty koszt (np. elastyczność, obciążenie DevOps).</>
+              )}
+              {calc.breakEvenActivations != null && (
+                <> Próg A↔B: jeśli realna potrzeba testowania przekroczy <b>~{calc.breakEvenActivations.toFixed(1)} aktywacji/mies.</b> przy obecnym oknie cyklicznym — model cykliczny staje się tańszy od czystego on-demand, poniżej tego progu — odwrotnie.</>
+              )}
+              {' '}Model hybrydowy ma sens, gdy część obciążenia jest regularna (pokrywa ją baza), a część to nieprzewidywalne skoki; scale-to-zero — gdy sesje są nieregularne, ale krótki timeout nie generuje dużych strat.
+            </p>
+          </div>
+
           <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
             <h4 className="text-[13px] font-semibold text-gray-700 mb-3">Struktura kosztów (co pochłania budżet)</h4>
             <div className="h-40 w-full" style={{ minHeight: 160 }}>
@@ -315,6 +354,10 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
                   <YAxis fontSize={10} stroke="#9ca3af" tickFormatter={(v) => `${v} zł`} />
                   <Tooltip formatter={(v) => fmtPLN(v)} contentStyle={{ backgroundColor: '#1f2937', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '12px' }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {calc.breakEvenActivations != null && (
+                    <ReferenceLine x={Math.round(calc.breakEvenActivations)} stroke="#9ca3af" strokeDasharray="4 4"
+                      label={{ value: 'próg A↔B', position: 'top', fontSize: 10, fill: '#6b7280' }} />
+                  )}
                   <ReferenceDot x={Math.round(monthlyActivationsB)} y={Math.round(calc.totalCostB)} r={4} fill="#f97316" stroke="#fff" strokeWidth={2} />
                   <Line type="monotone" dataKey="Model A (cykliczny)" stroke="#3b82f6" strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="Model B (on-demand)" stroke="#f97316" strokeWidth={2} dot={false} />
