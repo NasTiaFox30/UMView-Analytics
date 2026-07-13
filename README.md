@@ -1,18 +1,24 @@
-# React + Vite
+Instrukcja Obsługi: UMView Analytics
+(osobisty symulator analizy)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Ważna uwaga na start: Aplikacja przyjmuje wyłącznie pliki w formacie CSV. Aby rozpocząć analizę, wyeksportuj tabelę z raportu (zawierającą daty, godziny i powody uruchomienia) do pliku .csv i załaduj ją do programu.
 
-Currently, two official plugins are available:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. Dashboard (Analiza Danych)
+    • Wgraj plik CSV: System automatycznie odczyta logi.
+    • Odczytaj wykresy: Przeanalizuj rozkład godzinowy i matrycę obciążenia (Pivot). Dni o ekstremalnym, największym obciążeniu są automatycznie podświetlane na pomarańczowo.
+2. Symulator „Założenia” (Kalkulator symulacji)
+Użyj panelu bocznego, aby zmieniać stawki roboczogodzin (chmura AWS, czas DevOps) oraz dostosowywać harmonogramy. Program w czasie rzeczywistym przeliczy koszty i wskaże najtańszą opcję.
+Jak aplikacja wylicza modele optymalizacji?
+Dla pełnego obrazu program porównuje cztery podejścia. Model A to klasyczna praca ciągła (droga chmura, dużo przestojów), a Model B to ręczne włączanie na żądanie (tania chmura, ale drogi czas pracy ludzi).
+Najważniejsze do zrozumienia są jednak dwa zaawansowane modele (dodane osobiście), które symulator analizuje pod kątem największych oszczędności:
+    • Model H (Hybrydowy)
+        ○ Logika: Jest to kompromis. Definiujesz krótki, sztywny harmonogram tylko na najbardziej obciążone dni (tzw. baza). Wszelkie nieprzewidziane testy poza tym harmonogramem uruchamiasz ręcznie na żądanie.
+        ○ Jak to liczymy: Program weryfikuje pojemność zaplanowanej bazy. Jeśli testy z pliku CSV się w niej zmieszczą – koszt jest stały. Jeśli zapotrzebowanie przekroczy bazę, każda nadmiarowa aktywacja doliczana jest po wysokiej stawce ręcznego włączenia.
+        ○ Wzór:
+        
 
-## React Compiler
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
-
-Note: This will impact Vite dev & build performances.
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+    • Model S (Scale-to-Zero)
+        ○ Logika: Pełna, nowoczesna automatyzacja. Koszt pracy inżynierów (DevOps) wynosi tu 0 zł. Serwery włączają się same po wykryciu aktywności i wyłączają automatycznie po określonym czasie bezczynności (timeout).
+        ○ Jak to liczymy: Płacisz wyłącznie za rzeczywisty czas trwania testów z pliku CSV, powiększony jedynie o czas, w którym serwer "czekał" na uśpienie po zakończeniu pracy.
