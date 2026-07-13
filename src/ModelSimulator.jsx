@@ -61,8 +61,6 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
   
   const [enableScaleToZero, setEnableScaleToZero] = useState(false);
   const [scaleToZeroTimeoutMin, setScaleToZeroTimeoutMin] = useState(30);
-
-  // Новий стейт для ігнорування Моделі А в порівнянні
   const [ignoreModelA, setIgnoreModelA] = useState(false);
 
   const toggleDay = (day) => {
@@ -91,8 +89,6 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
     }, 0);
   }, [pivotState, cyclicDays, monthsCount]);
 
-  // Найдовша ОДНА реальна сесія в обрані дні тижня — місячна сума ховає цей ризик:
-  // вікно може "влазити" по сумі годин на місяць, але фізично обривати конкретну сесію.
   const maxSingleSessionOnCyclicDays = useMemo(() => {
     if (!rawData.length || cyclicDays.length === 0) return 0;
     return rawData.reduce((max, d) => (cyclicDays.includes(d.dayName) && d.hours > max ? d.hours : max), 0);
@@ -175,18 +171,44 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
   
   const maxBarTotal = Math.max(calc.totalCostA, calc.totalCostB, calc.totalCostH, enableScaleToZero ? calc.totalCostS : 0, 1);
 
-  // Визначення переможця з урахуванням ignoreModelA
-  const costs = { B: calc.totalCostB, H: calc.totalCostH };
-  if (!ignoreModelA) costs.A = calc.totalCostA;
-  if (enableScaleToZero) costs.S = calc.totalCostS;
-  
-  const sortedCosts = Object.entries(costs).sort((a, b) => a[1] - b[1]);
-  const cheaper = sortedCosts[0][0];
-  
+  // --- Визначення переможця з урахуванням пріоритетів ---
   const TIE_TOLERANCE_ZL = 0.5;
-  const nextDistinct = sortedCosts.slice(1).find(([, v]) => Math.abs(v - sortedCosts[0][1]) > TIE_TOLERANCE_ZL);
-  const diff = nextDistinct ? nextDistinct[1] - sortedCosts[0][1] : 0;
-  const diffPct = nextDistinct && nextDistinct[1] ? (diff / nextDistinct[1]) * 100 : 0;
+  
+  const cheaper = useMemo(() => {
+    const list = [{ id: 'B', val: calc.totalCostB }, { id: 'H', val: calc.totalCostH }];
+    if (!ignoreModelA) list.push({ id: 'A', val: calc.totalCostA });
+    if (enableScaleToZero) list.push({ id: 'S', val: calc.totalCostS });
+    
+    // Сортуємо спочатку за вартістю. Якщо вартості рівні, надаємо пріоритет 'A', потім 'H'
+    list.sort((a, b) => {
+      if (Math.abs(a.val - b.val) <= TIE_TOLERANCE_ZL) {
+        if (a.id === 'A' || b.id === 'A') return a.id === 'A' ? -1 : 1;
+        if (a.id === 'H' || b.id === 'H') return a.id === 'H' ? -1 : 1;
+      }
+      return a.val - b.val;
+    });
+    
+    return list[0].id;
+  }, [calc, ignoreModelA, enableScaleToZero]);
+
+  // Пошук наступної відмінної моделі для розрахунку економії
+  const { nextDistinct, diff, diffPct, isTieAH } = useMemo(() => {
+    const list = [{ id: 'B', val: calc.totalCostB }, { id: 'H', val: calc.totalCostH }];
+    if (!ignoreModelA) list.push({ id: 'A', val: calc.totalCostA });
+    if (enableScaleToZero) list.push({ id: 'S', val: calc.totalCostS });
+
+    list.sort((a, b) => a.val - b.val);
+    const minVal = list[0].val;
+    
+    const next = list.slice(1).find(m => Math.abs(m.val - minVal) > TIE_TOLERANCE_ZL);
+    const d = next ? next.val - minVal : 0;
+    const pct = next && next.val ? (d / next.val) * 100 : 0;
+    
+    const tieAH = !ignoreModelA && Math.abs(calc.totalCostA - calc.totalCostH) <= TIE_TOLERANCE_ZL;
+    
+    return { nextDistinct: next, diff: d, diffPct: pct, isTieAH: tieAH };
+  }, [calc, ignoreModelA, enableScaleToZero]);
+  
   const modelLabel = {
     A: 'cykliczny (Model A)',
     B: 'on-demand (Model B)',
@@ -338,14 +360,18 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
           <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl flex items-start gap-3 shadow-sm">
             <TrendingUp size={18} className="text-blue-600 mt-0.5 flex-shrink-0" />
             <p className="text-sm text-blue-900 leading-relaxed">
-              {nextDistinct ? (
+              {isTieAH ? (
+                <>
+                  Koszt prognozowany klasycznego <b>Modelu A</b> oraz <b>Modelu H</b> jest identyczny. Z punktu widzenia prostoty utrzymania infrastruktury, <b>najlepszym wyborem pozostaje Model A</b>. Jednakże, Model Hybrydowy (H) może być wdrożony opcjonalnie jako inwestycja w elastyczność bez zwiększвания budżetu.
+                </>
+              ) : nextDistinct ? (
                 <> 
-                  {ignoreModelA ? 'Skupiając się na nowoczesnych podejściach, najtańszy' : 'Przy obecnych założeniach najtańszy'} jest <b>{modelLabel[cheaper]}</b> — oszczędność ≈ <b>{fmtPLN(diff)}/mies.</b> względem następnej realnie innej opcji, <b>{modelLabel[nextDistinct[0]]}</b> ({diffPct.toFixed(0)}%). 
+                  {ignoreModelA ? 'Skupiając się na nowoczesnych podejściach, najtańszy' : 'Przy obecnych założeniach najtańszy'} jest <b>{modelLabel[cheaper]}</b> — oszczędność ≈ <b>{fmtPLN(diff)}/mies.</b> względem następnej realnie innej opcji, <b>{modelLabel[nextDistinct.id]}</b> ({diffPct.toFixed(0)}%). 
                 </>
               ) : (
                 <> Przy obecnych założeniach modele wychodzą praktycznie tak samo (różnica &lt; {TIE_TOLERANCE_ZL} zł) — wybór zależy od elastyczności lub obciążenia DevOps.</>
               )}
-              {calc.breakEvenActivations != null && !ignoreModelA && (
+              {calc.breakEvenActivations != null && !ignoreModelA && !isTieAH && (
                 <> Próg A↔B: jeśli potrzeba przekroczy <b>~{calc.breakEvenActivations.toFixed(1)} aktywacji/mies.</b> — model A staje się tańszy od czystego on-demand.</>
               )}
               {' '}Model hybrydowy (H) ma sens, gdy część obciążenia pokrywa baza, a reszta to skoki.
