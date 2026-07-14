@@ -429,7 +429,7 @@ function App() {
         )}
       </div>
       <footer className="mt-8 text-center text-gray-400 text-[11px]">
-        <p>Created by: Anastasiia Bzova &copy; {new Date().getFullYear()}</p>
+        <p>Created by: Anastasiia Bzova &copy; {new Date().getFullYear()} - V0.1 (beta)</p>
       </footer>
     </div>
   );
