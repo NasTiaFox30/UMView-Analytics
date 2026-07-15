@@ -1,7 +1,35 @@
 import React, { useState, useMemo } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea, Cell } from 'recharts';
-import { UploadCloud, Clock, Calendar, TrendingUp, LayoutDashboard, Calculator } from 'lucide-react';
-import ModelSimulator from './ModelSimulator';
+import { UploadCloud, Clock, Calendar, TrendingUp, LayoutDashboard, Calculator, Compass } from 'lucide-react';
+import DataModelSimulator from './DataModelSimulator';
+import NoDataModelSimulator from './NoDataModelSimulator';
+
+// --- ДОПОМІЖНІ ФУНКЦІЇ ДЛЯ ДАТ ---
+const parseDateTime = (str) => {
+  if (!str) return null;
+  const parts = str.trim().split(' ');
+  if (parts.length < 2) return null;
+  
+  const dateParts = parts[0].split('.');
+  const timeParts = parts[1].split(':');
+  
+  if (dateParts.length !== 3 || timeParts.length < 2) return null;
+  
+  const day = parseInt(dateParts[0], 10);
+  const month = parseInt(dateParts[1], 10) - 1; // Місяці в JS з 0
+  const year = parseInt(dateParts[2], 10);
+  const hours = parseInt(timeParts[0], 10);
+  const minutes = parseInt(timeParts[1], 10);
+  
+  return new Date(year, month, day, hours, minutes);
+};
+
+const formatDate = (date) => {
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  return `${dd}.${mm}.${yyyy}`; // Перетворюємо назад у формат CSV
+};
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -28,65 +56,128 @@ function App() {
         text = new TextDecoder('utf-8').decode(buffer);
       }
 
-      const lines = text.split(/\r?\n/);
-      
-      const formattedData = [];
-      let total = 0;
-      let maxH = 0;
-      let maxDate = null;
+      // 1. РОЗДІЛЯЄМО ФАЙЛ ТА ШУКАЄМО КОЛОНКИ
+      const lines = text.split(/\r?\n/).filter(line => line.trim() !== "");
+      if (lines.length < 2) return;
 
-      const daysTotals = { 'Pn': 0, 'Wt': 0, 'Śr': 0, 'Cz': 0, 'Pt': 0, 'Sb': 0, 'Nd': 0 };
+      const delimiter = lines[0].includes(';') ? ';' : ',';
+      const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
+
+      const findIndex = (keywords) => headers.findIndex(h => keywords.some(k => h.includes(k)));
+      
+      const startIndex = findIndex(['start date', 'start_date', 'uruchomienie']);
+      const stopIndex = findIndex(['stop date', 'stop_date', 'zakończenie']);
+      const dateIndex = findIndex(['data', 'date']);
+      const hoursIndex = findIndex(['godziny', 'hours', 'czas']);
+      const userIndex = findIndex(['uruchamiający', 'uruchamiaj', 'user', 'kto']);
+      const reasonIndex = findIndex(['powód', 'powod', 'komentarz', 'uwagi']);
+
+      const parsedData = [];
+
+      // 2. ОБРОБЛЯЄМО КОЖЕН РЯДОК (Розрізання)
+      for (let i = 1; i < lines.length; i++) {
+        // Додаємо replace, щоб прибрати зайві лапки, якщо вони є
+        const cells = lines[i].split(delimiter).map(c => c.replace(/^"|"$/g, '').trim());
+        if (cells.length < 2) continue;
+
+        const rawStartDate = startIndex !== -1 ? cells[startIndex] : '';
+        const rawStopDate = stopIndex !== -1 ? cells[stopIndex] : '';
+        const rawDate = dateIndex !== -1 ? cells[dateIndex] : '';
+        
+        const rawHours = hoursIndex !== -1 ? cells[hoursIndex] : '0';
+        const parsedHours = parseFloat(rawHours.replace(',', '.')) || 0;
+        
+        const user = userIndex !== -1 ? cells[userIndex] : 'Nieznany';
+        const reason = reasonIndex !== -1 ? cells[reasonIndex] : '';
+
+        let wasSplit = false;
+
+        if (rawStartDate && rawStopDate) {
+          const startDate = parseDateTime(rawStartDate);
+          const endDate = parseDateTime(rawStopDate);
+
+          if (startDate && endDate && endDate > startDate) {
+            wasSplit = true;
+            let current = new Date(startDate);
+            
+            while (current < endDate) {
+              const nextMidnight = new Date(current.getFullYear(), current.getMonth(), current.getDate() + 1, 0, 0, 0, 0);
+              
+              if (nextMidnight >= endDate) {
+                const segmentHours = (endDate - current) / (3600 * 1000);
+                parsedData.push({ date: formatDate(current), hours: parseFloat(segmentHours.toFixed(2)), user, reason });
+                break;
+              } else {
+                const segmentHours = (nextMidnight - current) / (3600 * 1000);
+                parsedData.push({ date: formatDate(current), hours: parseFloat(segmentHours.toFixed(2)), user, reason });
+                current = nextMidnight;
+              }
+            }
+          }
+        }
+
+        if (!wasSplit && rawDate) {
+          parsedData.push({ date: rawDate, hours: parsedHours, user, reason });
+        }
+      }
+
+      // 3. ФОРМАТУЄМО ДАНІ ДЛЯ ДАШБОРДУ (Групуємо дні та рахуємо тотали)
       const dayNames = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb'];
       const monthNames = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
       
-      let dataIdx = 5;
-      let hoursIdx = 6;
-      let reasonIdx = 7;
+      const daysTotals = { 'Pn': 0, 'Wt': 0, 'Śr': 0, 'Cz': 0, 'Pt': 0, 'Sb': 0, 'Nd': 0 };
+      let total = 0;
+      let maxH = 0;
+      let maxDate = null;
+      const formattedData = [];
 
-      const headerLine = lines.find(l => l.trim().length > 0);
-      if (headerLine) {
-        const headers = headerLine.split(';').map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
-        const hIdx = headers.indexOf('godziny');
-        if (hIdx !== -1) {
-          hoursIdx = hIdx;
-          dataIdx = hIdx - 1; 
-          reasonIdx = hIdx + 1; 
-        }
-      }
+      // Тепер працюємо виключно з чистим масивом parsedData!
+      parsedData.forEach(item => {
+        if (!item.date || isNaN(item.hours) || item.hours === 0) return;
 
-      for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-        const columns = lines[i].split(';').map(cell => cell.replace(/^"|"$/g, '').trim());
-        
-        const dateStr = columns[dataIdx];
-        const hoursStr = columns[hoursIdx];
-        const reason = columns[reasonIdx];
-
-        if (!dateStr || dateStr.toLowerCase() === 'data' || dateStr.toLowerCase() === 'razem' || !hoursStr) continue;
-
-        const hours = parseFloat(hoursStr.replace(',', '.')) || 0;
-        
-        let monthStr = '';
-        let dayNameStr = '';
-        let dateObj = null;
-        const dateParts = dateStr.split('.');
-        
+        const dateParts = item.date.split('.');
         if (dateParts.length === 3) {
-          dateObj = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
-          dayNameStr = dayNames[dateObj.getDay()];
-          daysTotals[dayNameStr] += hours;
-          monthStr = monthNames[parseInt(dateParts[1], 10) - 1];
+          const dateObj = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
+          const dayNameStr = dayNames[dateObj.getDay()];
+          const monthStr = monthNames[parseInt(dateParts[1], 10) - 1];
+
+          daysTotals[dayNameStr] += item.hours;
+          total += item.hours;
+
+          // Шукаємо, чи ми вже додали цей день у formattedData
+          const existingDayIndex = formattedData.findIndex(d => d.date === item.date);
+          
+          if (existingDayIndex > -1) {
+             // Додаємо години до існуючого дня
+             formattedData[existingDayIndex].hours += item.hours;
+             if (item.reason && !formattedData[existingDayIndex].reason.includes(item.reason)) {
+                 formattedData[existingDayIndex].reason += ` | ${item.reason}`;
+             }
+             // Оновлюємо макcимум, якщо потрібно
+             if (formattedData[existingDayIndex].hours > maxH) {
+                 maxH = formattedData[existingDayIndex].hours;
+                 maxDate = item.date;
+             }
+          } else {
+             // Створюємо новий запис для дня
+             formattedData.push({
+               date: item.date,
+               hours: item.hours,
+               reason: item.reason,
+               monthStr,
+               dayName: dayNameStr,
+               dateObj
+             });
+             
+             if (item.hours > maxH) {
+                 maxH = item.hours;
+                 maxDate = item.date;
+             }
+          }
         }
+      });
 
-        total += hours;
-        if (hours > maxH) {
-          maxH = hours;
-          maxDate = dateStr;
-        }
-
-        formattedData.push({ date: dateStr, hours, reason, monthStr, dayName: dayNameStr, dateObj });
-      }
-
+      // 4. СОРТУВАННЯ ТА СТВОРЕННЯ МАСИВІВ ДЛЯ РЕНДЕРУ (Залишається без змін)
       formattedData.sort((a, b) => (a.dateObj?.getTime() || 0) - (b.dateObj?.getTime() || 0));
 
       const mAreas = [];
@@ -221,10 +312,16 @@ function App() {
                 <LayoutDashboard size={14} /> Dashboard
               </button>
               <button
-                onClick={() => setActiveTab('simulator')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition ${activeTab === 'simulator' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                onClick={() => setActiveTab('datasimulator')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition ${activeTab === 'datasimulator' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 <Calculator size={14} /> Symulator
+              </button>
+              <button
+                onClick={() => setActiveTab('nodatasimulator')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition ${activeTab === 'nodatasimulator' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                <Compass size={14} /> KS / BO
               </button>
             </div>
             <label className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-lg cursor-pointer hover:bg-blue-700 transition font-medium text-xs">
@@ -235,8 +332,10 @@ function App() {
           </div>
         </header>
 
-        {activeTab === 'simulator' ? (
-          <ModelSimulator rawData={data} pivotState={pivotState} monthAreas={monthAreas} />
+        {activeTab === 'datasimulator' ? (
+          <DataModelSimulator rawData={data} pivotState={pivotState} monthAreas={monthAreas} />
+        ) : activeTab === 'nodatasimulator' ? (
+          <NoDataModelSimulator />
         ) : data.length > 0 ? (
           <div className="flex flex-col lg:flex-row gap-4">
             
@@ -429,7 +528,7 @@ function App() {
         )}
       </div>
       <footer className="mt-8 text-center text-gray-400 text-[11px]">
-        <p>Created by: Anastasiia Bzova &copy; {new Date().getFullYear()} - V0.1 (beta)</p>
+        <p>Created by: Anastasiia Bzova &copy; {new Date().getFullYear()} - V0.3 (beta)</p>
       </footer>
     </div>
   );

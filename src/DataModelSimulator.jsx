@@ -5,94 +5,14 @@ import {
 } from 'recharts';
 import {
   Calculator, Server, Clock, AlertTriangle, TrendingUp, RefreshCcw, Zap, Cpu,
-  ToggleRight, ToggleLeft, EyeOff, ChevronDown, ChevronRight, X, GitMerge
+  ToggleRight, ToggleLeft, ChevronDown, ChevronRight, GitMerge
 } from 'lucide-react';
+import {
+  WEEKS_PER_MONTH, DAY_ORDER, TIE_TOLERANCE_ZL,
+  fmtPLN, fmtPct, NumberField, DayPicker, InfoButton, ToggleRow,
+} from './simulatorShared';
 
-const WEEKS_PER_MONTH = 4.345;
-const DAY_ORDER = ['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'];
-const TIE_TOLERANCE_ZL = 0.5;
-
-function fmtPLN(n) {
-  if (!isFinite(n)) return '—';
-  return n.toLocaleString('pl-PL', { maximumFractionDigits: 0 }) + ' zł';
-}
-
-function fmtPct(n) {
-  if (!isFinite(n)) return '—';
-  return (n > 0 ? '-' : n < 0 ? '+' : '') + Math.abs(n).toFixed(0) + '%';
-}
-
-function NumberField({ label, value, onChange, step = 1, suffix, hint, disabled = false }) {
-  return (
-    <div className={disabled ? 'opacity-50 transition-opacity' : 'transition-opacity'}>
-      <label className="text-[11px] font-medium text-gray-500 flex justify-between leading-none mb-1">
-        <span>{label}</span>
-        {hint && <span className="text-gray-400 font-normal">{hint}</span>}
-      </label>
-      <div className="flex items-center gap-1.5">
-        <input
-          type="number"
-          step={step}
-          value={value}
-          disabled={disabled}
-          onChange={(e) => onChange(Math.max(0, parseFloat(e.target.value) || 0))}
-          className="w-full border border-gray-200 rounded-md px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-gray-50 disabled:cursor-not-allowed transition-colors"
-        />
-        {suffix && <span className="text-[11px] text-gray-400 whitespace-nowrap">{suffix}</span>}
-      </div>
-    </div>
-  );
-}
-
-function DayPicker({ days, onToggle }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {DAY_ORDER.map(day => (
-        <label key={day} className={`flex items-center justify-center px-2 py-1 rounded text-xs font-medium cursor-pointer transition-colors border ${days.includes(day) ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'}`}>
-          <input type="checkbox" className="hidden" checked={days.includes(day)} onChange={() => onToggle(day)} />
-          {day}
-        </label>
-      ))}
-    </div>
-  );
-}
-
-function InfoButton({ label = 'Jak to działa?', children }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <span className="relative inline-flex">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        title={label}
-        className="w-4 h-4 rounded-full bg-teal-100 text-teal-700 text-[10px] font-bold leading-none flex items-center justify-center hover:bg-teal-200 transition-colors"
-      >
-        i
-      </button>
-      {open && (
-        <div className="absolute z-30 left-0 top-6 w-72 p-3 bg-white border border-gray-200 rounded-lg shadow-lg text-[11px] text-gray-600 leading-relaxed">
-          <button onClick={() => setOpen(false)} className="absolute top-1.5 right-1.5 text-gray-300 hover:text-gray-500">
-            <X size={12} />
-          </button>
-          {children}
-        </div>
-      )}
-    </span>
-  );
-}
-
-function ToggleRow({ label, icon, active, onClick, activeColor = 'text-teal-600', activeToggleColor = 'text-teal-500' }) {
-  return (
-    <div className="flex items-center justify-between cursor-pointer mb-2" onClick={onClick}>
-      <p className={`text-[11px] font-semibold uppercase tracking-wide flex items-center gap-1 ${active ? activeColor : 'text-gray-400'}`}>
-        {icon} {label}
-      </p>
-      {active ? <ToggleRight size={16} className={activeToggleColor} /> : <ToggleLeft size={16} className="text-gray-300" />}
-    </div>
-  );
-}
-
-export default function ModelSimulator({ rawData = [], pivotState, monthAreas = [] }) {
+export default function SimulatorPiuwOwBip({ rawData = [], pivotState, monthAreas = [] }) {
   const hasData = rawData.length > 0;
   const monthsCount = Math.max(monthAreas.length, 1);
 
@@ -107,10 +27,10 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
   }, [rawData, hasData, monthsCount]);
 
   // Stawka serwera — schowana domyślnie, najmniej istotna dla analizy porównawczej.
-  // Uwaga: po naszej stronie uruchomienie serwera nie kosztuje nic (robi to Wykonawca) —
-  // dlatego żaden z modeli nie ma już osobnego kosztu "czasu DevOps/uruchomienia".
+  // Referencja wyliczona z raportu AWS Cost Explorer (konto "UMW Decidim Management", sty–cze 2026) —
+  // zob. InfoButton przy polu "Koszt serwera" po szczegóły i zastrzeżenia.
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [serverCostPerHour, setServerCostPerHour] = useState(3.5);
+  const [serverCostPerHour, setServerCostPerHour] = useState(6.5);
 
   // Model A — cykliczny
   const [cyclicDays, setCyclicDays] = useState(['Pn', 'Wt', 'Śr', 'Cz', 'Pt']);
@@ -323,6 +243,14 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center gap-1.5">
+        <Calculator size={16} className="text-gray-500" />
+        <h2 className="text-[15px] font-bold text-gray-800">Symulacja: PIUW, OW, BIP</h2>
+      </div>
+      <p className="text-[11px] text-gray-400 -mt-3">
+        Działy z prowadzonymi raportami użycia — porównanie oparte na rzeczywistych danych.
+      </p>
+
       {!hasData && (
         <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-4 py-2 shadow-sm">
           <AlertTriangle size={14} />
@@ -373,7 +301,7 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
                   <p className="text-[10px] text-gray-400 leading-tight mt-1">z {calc.scheduledHoursA.toFixed(1)} godz. zamówionych w harmonogramie (suma miesięczna)</p>
                   {actualUsageA > calc.scheduledHoursA && (
                     <p className="text-[10px] text-gray-500 leading-tight mt-1">
-                      ⚠ Rzeczywiste użycie nie może przekraczać zamówionych godzin
+                      ⚠ Rzeczywiste użycie nie może przekraczać zamówionych godzin — w obliczeniach ograniczone do {calc.scheduledHoursA.toFixed(1)} godz.
                     </p>
                   )}
                 </div>
@@ -500,10 +428,19 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
                 <span className="flex items-center gap-1"><Server size={10} /> Zaawansowane: stawki</span>
                 {showAdvanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               </button>
-              <div className={`overflow-hidden transition-all duration-300 ${showAdvanced ? 'max-h-32 opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
-                <NumberField label="Koszt serwera" value={serverCostPerHour} step={0.5} suffix="zł/godz." onChange={setServerCostPerHour} />
+              <div className={`overflow-hidden transition-all duration-300 ${showAdvanced ? 'max-h-52 opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
+                <p className="text-[11px] font-medium text-gray-500 flex items-center gap-1.5 mb-1">
+                  Koszt serwera
+                  <InfoButton label="Skąd ta stawka?">
+                    <p className="mb-1.5"><b>Źródło:</b> AWS Cost Explorer, konto „UMW Decidim Management”, sty–cze 2026. Rachunek za CAŁE konto (produkcja + wszystkie środowiska razem) wyniósł średnio 2 467 $/mies.</p>
+                    <p className="mb-1.5">Do stawki wzięto tylko usługi skalujące się z pracą środowisk (ECS, RDS, ECR, ELB, ElastiCache, App Runner, EC2) — bez podatku, wsparcia, DNS i innych stałych opłat: ~1 261 $/mies. ≈ 4 790 zł (kurs ~3,8 zł).</p>
+                    <p className="mb-1.5">Podzielone przez ~730 godz./mies. (1 środowisko 24/7) = <b>~6,5 zł/godz.</b> To górna granica — bill obejmuje razem produkcję i testy, bez podziału na środowiska.</p>
+                    <p><b>Dokładniej:</b> sprawdźcie „Cost Allocation Tags” w AWS (widoczne w Waszym Cost Explorer) — jeśli zasoby są otagowane per środowisko/dział, można wyliczyć realną stawkę zamiast tego przybliżenia.</p>
+                  </InfoButton>
+                </p>
+                <NumberField label="" value={serverCostPerHour} step={0.5} suffix="zł/godz." onChange={setServerCostPerHour} />
                 <p className="text-[10px] text-gray-400 leading-tight mt-1.5">
-                  Stawka referencyjna, wyliczona łącznie z 4 działów — nie jest to nasz koszt (płaci go zamawiający projekt), a punkt odniesienia do porównania modeli.
+                  Stawka referencyjna, szacowana z rachunku AWS za całe konto — nie jest to nasz koszt (płaci go zamawiający projekt), a punkt odniesienia do porównania modeli.
                 </p>
               </div>
             </div>
@@ -531,7 +468,8 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
                 >
                   <p className={`text-[11px] font-medium ${isWinner ? 'text-emerald-700' : 'text-gray-500'}`}>{modelMeta[id].label}</p>
                   <p className={`text-2xl font-bold mt-0.5 ${isWinner ? 'text-emerald-700' : 'text-gray-800'}`}>
-                    {isBaseline ? 'najdroższy' : fmtPct(savingsPct)}
+                    {fmtPct(savingsPct)}
+                    {isBaseline && <span className="text-xs font-normal text-gray-400 ml-1.5">(najdroższy)</span>}
                   </p>
                   <p className="text-[11px] text-gray-400 mt-0.5">{fmtPLN(val)}/mies.</p>
                   <p className="text-[10px] text-gray-500 mt-1">{subtext}</p>
@@ -539,22 +477,6 @@ export default function ModelSimulator({ rawData = [], pivotState, monthAreas = 
               );
             })}
           </div>
-
-          {/* <div className="p-4 bg-blue-50 border border-blue-100 rounded-xl flex items-start gap-3 shadow-sm">
-            <TrendingUp size={18} className="text-blue-600 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-blue-900 leading-relaxed">
-              {nextDistinct ? (
-                <>
-                  Przy obecnych założeniach najtańszy jest <b>{modelLabel[cheaper]}</b> — oszczędność ≈ <b>{fmtPLN(diff)}/mies.</b> ({diffPct.toFixed(0)}%) względem następnej realnie innej opcji, <b>{modelLabel[nextDistinct.id]}</b>.
-                </>
-              ) : (
-                <>Aktywne modele wychodzą praktycznie tak samo (różnica &lt; {TIE_TOLERANCE_ZL} zł) — wybór zależy od elastyczności operacyjnej.</>
-              )}
-              {calc.breakEvenActivations != null && !ignoreModelA && (
-                <> Próg A↔B: powyżej <b>~{calc.breakEvenActivations.toFixed(1)} aktywacji/mies.</b> harmonogram cykliczny staje się tańszy od czystego on-demand.</>
-              )}
-            </p>
-          </div> */}
 
           <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
             <h4 className="text-[13px] font-semibold text-gray-700 mb-3">Struktura kosztów (co pochłania budżet)</h4>
