@@ -669,13 +669,22 @@ function App() {
                 {/* === ROW 0: KPI CARDS === */}
                 <div className="space-y-3">
                   {/* Główne metryki */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
                     <KPICard icon={Activity} 
                       label="Sesje" 
                       value={summary.totalSessions} 
                       sub={`${summary.activeDays} dni aktywnych`} 
                       color="blue" 
                       tooltip="W jednym dniu może występować >1 sesji – np. jeśli sesje nakładają się lub są uruchamiane przez różnych użytkowników."
+                    />
+                    {/* NOWA KARTA: Dni (aktywne / robocze) */}
+                    <KPICard
+                      icon={Calendar}
+                      label="Dni"
+                      value={`${summary.activeDays} / ${summary.totalWorkingDays}`}
+                      sub="aktywne / robocze"
+                      color="teal"
+                      tooltip="Liczba dni, w których odbywały się testy, na tle wszystkich dni roboczych (pn–pt) w analizowanym okresie."
                     />
                     <KPICard
                       icon={Clock}
