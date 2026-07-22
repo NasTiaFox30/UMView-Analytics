@@ -82,6 +82,45 @@ const mergeIntervals = (intervals) => {
   return total;
 };
 
+// ============ КОМПОНЕНТ GANTT BAR DLA SCATTER ============
+const GanttBar = (props) => {
+  const { x, y, width, height, payload } = props;
+  if (x === undefined || y === undefined || width === undefined || height === undefined) return null;
+
+  const label = payload.label || '';
+  const yIndex = payload.id || 0;
+  
+  const colors = ['#3b82f6', '#f97316', '#8b5cf6', '#10b981', '#ef4444', '#f59e0b', '#ec4899'];
+  const color = colors[yIndex % colors.length];
+
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y}
+        width={Math.max(2, width)} // Мінімальна ширина 2px, щоб бачити дуже короткі сесії
+        height={height}
+        fill={color}
+        stroke="#fff"
+        strokeWidth={1}
+        rx={4}
+      />
+      {width > 30 && (
+        <text
+          x={x + 4}
+          y={y + height / 2 + 3}
+          fontSize={9}
+          fill="#fff"
+          fontWeight="bold"
+          fontFamily="sans-serif"
+        >
+          {label.length > 12 ? label.substring(0, 10) + '…' : label}
+        </text>
+      )}
+    </g>
+  );
+};
+
 // ============ ОСНОВНИЙ КОМПОНЕНТ ============
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -95,7 +134,8 @@ function App() {
   const [sessionDurations, setSessionDurations] = useState([]);
   const [timelineData, setTimelineData] = useState([]);
   const [overlapStats, setOverlapStats] = useState({ totalOverlap: 0, details: [] });
-  const [showModelA, setShowModelA] = useState(false); // domyślnie zwinięte
+  const [selectedOverlapDay, setSelectedOverlapDay] = useState(null);
+  const [showModelA, setShowModelA] = useState(false);
 
   // ============ ОБРОБКА ФАЙЛУ ============
   const handleFileUpload = useCallback((e) => {
@@ -205,7 +245,7 @@ function App() {
         }
       }
 
-      // ====== ОБЧИСЛЕННЯ АКТИВНИХ ГОДИН НА ДЕНЬ (ОБ'ЄДНАННЯ ІНТЕРВАЛІВ) ======
+      // ====== ОБЧИСЛЕННЯ АКТИВНИХ ГОДИН НА ДЕНЬ ======
       const dailyMap = {};
 
       rawSessions.forEach(s => {
@@ -342,7 +382,7 @@ function App() {
         monthStr: d.monthStr
       }));
 
-      // Перекриття сесій (z datami)
+      // Перекриття сесій
       let totalOverlap = 0;
       const overlapDetails = [];
       for (let i = 0; i < rawSessions.length; i++) {
@@ -369,8 +409,7 @@ function App() {
           }
         }
       }
-      // const overlapDisplay = overlapDetails.slice(0, 30).map((item, idx) => ({ ...item, id: idx + 1 }));
-      // Grupowanie przecięć według daty
+
       const overlapByDate = {};
       overlapDetails.forEach(item => {
         const dateKey = item.date;
@@ -388,7 +427,7 @@ function App() {
           overlapHours: parseFloat(item.totalOverlapHours.toFixed(2)),
           count: item.count,
         }))
-        .sort((a, b) => a.date.localeCompare(b.date)); // sortowanie chronologiczne
+        .sort((a, b) => a.date.localeCompare(b.date));
 
       // Pivot table
       const activeMonthsSet = new Set();
@@ -436,16 +475,14 @@ function App() {
 
       // ====== ФІНАЛЬНІ СТАТИСТИКИ ======
       const allHours = formattedData.map(d => d.hours);
-      const total = allHours.reduce((s, v) => s + v, 0); // union — bez podwójnego liczenia nakładających się sesji
-      const sumHours = rawSessions.reduce((s, v) => s + v.hours, 0); // suma sesji — zgadza się z "Razem" w raporcie źródłowym
+      const total = allHours.reduce((s, v) => s + v, 0);
+      const sumHours = rawSessions.reduce((s, v) => s + v.hours, 0);
       const avg = allHours.length > 0 ? total / allHours.length : 0;
       const med = median(allHours);
       const std = stddev(allHours);
       const activeDays = formattedData.length;
       const totalSessions = rawSessions.length;
 
-      // --- Wykorzystanie i Przestoje w odniesieniu do Modelu A (cyklicznego) ---
-      // Liczymy wszystkie dni robocze (pn–pt) w całym okresie od pierwszej do ostatniej daty
       let totalWorkingDays = 0;
       if (formattedData.length > 0) {
         const firstDate = new Date(formattedData[0].dateObj);
@@ -460,11 +497,9 @@ function App() {
         }
       }
 
-      const potentialHours = totalWorkingDays * 8; // 8h dziennie
+      const potentialHours = totalWorkingDays * 8;
       const utilRate = potentialHours > 0 ? total / potentialHours : 0;
       const downtime = Math.max(0, potentialHours - total);
-
-      // ============================================================
 
       const peakHours = Math.max(...allHours, 0);
 
@@ -474,6 +509,12 @@ function App() {
       setTimelineData(timeline);
       setHourlyHeatmap(heatmapArr);
       setOverlapStats({ totalOverlap, details: overlapDisplay });
+      if (overlapDisplay.length > 0) {
+        const maxOverlapDay = overlapDisplay.reduce((a, b) => a.overlapHours > b.overlapHours ? a : b);
+        setSelectedOverlapDay(maxOverlapDay.date);
+      } else {
+        setSelectedOverlapDay(null);
+      }
       setMonthAreas(mAreas);
       setWeeklyStats(weeklyArr);
       setSummary({
@@ -508,7 +549,6 @@ function App() {
         totals[d.monthStr] = (totals[d.monthStr] || 0) + d.hours;
       }
     });
-    // Sort months chronologically by MONTH_NAMES order
     return Object.entries(totals)
       .map(([month, hours]) => ({ month, hours: parseFloat(hours.toFixed(2)) }))
       .sort((a, b) => MONTH_NAMES.indexOf(a.month) - MONTH_NAMES.indexOf(b.month));
@@ -531,7 +571,7 @@ function App() {
 
   const durationStats = useMemo(() => {
     if (!sessionDurations.length) return { min: 0, q1: 0, q3: 0, max: 0 };
-    const sorted = [...sessionDurations].sort((a, b) => a - b); // kopia — nie mutujemy stanu
+    const sorted = [...sessionDurations].sort((a, b) => a - b);
     return {
       min: sorted[0],
       q1: sorted[Math.floor(sorted.length * 0.25)] ?? sorted[0],
@@ -621,7 +661,6 @@ function App() {
 
                 {/* === ROW 0: KPI CARDS === */}
                 <div className="space-y-3">
-                  {/* Główne metryki (bez Modelu A) */}
                   <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2">
                     <KPICard icon={Activity} label="Sesje" value={summary.totalSessions} sub={`${summary.activeDays} dni aktywnych`} color="blue" />
                     <KPICard
@@ -644,7 +683,7 @@ function App() {
                     <KPICard icon={Zap} label="Szczyt" value={`${fmtNum(summary.peakHours)}h`} sub={`${summary.maxDay?.date || '—'}`} color="orange" />
                   </div>
 
-                  {/* Model A – porównanie (cykliczny) – domyślnie zwinięte */}
+                  {/* Model A */}
                   <div className="bg-gray-50/80 border border-gray-200 rounded-xl p-3">
                     <div 
                       className="flex items-center gap-2 cursor-pointer select-none" 
@@ -654,7 +693,7 @@ function App() {
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
                         Model A (cykliczny) – porównanie
                       </span>
-                      <span className="relative inline-flex ml-1 cursor-help" title="Model A zakłada stałą dostępność środowiska przez 8 godzin każdego dnia roboczego (pn–pt), niezależnie od faktycznego użycia. To hipotetyczny scenariusz, który pozwala oszacować potencjalne straty w porównaniu do elastycznego modelu On‑demand.">
+                      <span className="relative inline-flex ml-1 cursor-help" title="Model A zakłada stałą dostępność środowiska przez 8 godzin każdego dnia roboczego (pn–pt), niezależnie od faktycznego użycia.">
                         <Info size={12} className="text-gray-400 hover:text-gray-600" />
                       </span>
                       <span className="ml-auto">
@@ -678,7 +717,7 @@ function App() {
                             value={fmtNum(summary.downtime)} 
                             sub="godz. — hipotetyczny model cykliczny 8h/dzień" 
                             color="gray" 
-                            tooltip="Godziny, które byłyby zmarnowane, GDYBY zastosowano cykliczny model (8h/dzień roboczy) — hipotetyczne porównanie, nie aktualny koszt." 
+                            tooltip="Godziny, które byłyby zmarnowane w cyklicznym modelu (8h/dzień roboczy) — hipotetyczne porównanie." 
                           />
                         </div>
                         <p className="text-[9px] text-gray-400 mt-2">
@@ -689,7 +728,7 @@ function App() {
                   </div>
                 </div>
 
-                {/* === ROW 1: Timeline (wszystkie dni) === */}
+                {/* === ROW 1: Timeline === */}
                 <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-[12px] font-semibold text-gray-700 flex items-center gap-1.5">
@@ -736,9 +775,6 @@ function App() {
                     </ResponsiveContainer>
                   </div>
                   <p className="text-[9px] text-gray-400 mt-1">
-                    Pełna historia aktywności (godziny = suma złączeń przedziałów) • 
-                  </p>
-                  <p className="text-[9px] text-gray-400 mt-1">
                     Linie pionowe = granice miesięcy • Pionowa linia i kropka = dzień szczytowy (najwięcej godzin)
                   </p>
                 </div>
@@ -757,7 +793,7 @@ function App() {
                     <div className="h-44 w-full">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={(() => {
-                          const CAP = 16; // godziny — powyżej wrzucamy do wspólnego bina, żeby wykres nie rozciągał się do 54h
+                          const CAP = 16;
                           const bins = {};
                           sessionDurations.forEach(h => {
                             const key = h >= CAP ? CAP : Math.floor(h / 2) * 2;
@@ -847,9 +883,8 @@ function App() {
                   </div>
                 </div>
 
-                {/* === ROW 3: Profile tygodnia i miesiąca + Przecięcia === */}
+                {/* === ROW 3: Profile + GANTT === */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Lewa kolumna: Profil tygodnia + Profil miesiąca */}
                   <div className="space-y-3">
                     {/* Profil tygodnia */}
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
@@ -896,7 +931,7 @@ function App() {
                     </div>
                   </div>
 
-                  {/* Przecięcia sesji */}
+                  {/* === GANTT: Przecięcia sesji === */}
                   <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="text-[12px] font-semibold text-gray-700 flex items-center gap-1.5">
@@ -913,28 +948,109 @@ function App() {
                         Brak przecięć między sesjami.
                       </div>
                     ) : (
-                      <div className="h-44 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={overlapStats.details} margin={{ top: 5, right: 10, left: 0, bottom: 20 }}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                            <XAxis 
-                              dataKey="date" 
-                              fontSize={9} 
-                              stroke="#9ca3af"
-                              tick={{ angle: -30, textAnchor: 'end' }}
-                            />
-                            <YAxis fontSize={9} stroke="#9ca3af" />
-                            <Tooltip 
-                              contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }}
-                              formatter={(v, name) => [`${v.toFixed(1)} h`, name === 'overlapHours' ? 'Przecięcie' : name]}
-                              labelFormatter={(label) => `Data: ${label}`}
-                            />
-                            <Bar dataKey="overlapHours" fill="#ef4444" radius={[4, 4, 0, 0]} name="Godziny przecięcia" />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
+                      <>
+                        <div className="flex flex-wrap gap-1.5 mb-3">
+                          {overlapStats.details.map((item) => (
+                            <button
+                              key={item.date}
+                              onClick={() => setSelectedOverlapDay(item.date)}
+                              className={`text-[10px] px-2 py-1 rounded-lg border transition ${
+                                selectedOverlapDay === item.date
+                                  ? 'bg-red-100 border-red-400 text-red-700 font-medium'
+                                  : 'bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200'
+                              }`}
+                            >
+                              {item.date} ({item.overlapHours.toFixed(1)}h)
+                            </button>
+                          ))}
+                        </div>
+                        {selectedOverlapDay && (() => {
+                          const dayStart = new Date(selectedOverlapDay.split('.').reverse().join('-'));
+                          dayStart.setHours(0, 0, 0, 0);
+                          const dayEnd = new Date(dayStart);
+                          dayEnd.setDate(dayEnd.getDate() + 1);
+
+                          const daySessions = sessions.filter(s => {
+                            if (!s.startDate || !s.stopDate) return false;
+                            return s.startDate < dayEnd && s.stopDate > dayStart;
+                          });
+
+                          const ganttData = daySessions.map((s, index) => {
+                            const start = Math.max(s.startDate.getTime(), dayStart.getTime());
+                            const end = Math.min(s.stopDate.getTime(), dayEnd.getTime());
+                            const startHour = (start - dayStart.getTime()) / (3600 * 1000);
+                            const endHour = (end - dayStart.getTime()) / (3600 * 1000);
+                            return {
+                              id: index,
+                              range: [startHour, endHour],
+                              duration: endHour - startHour,
+                              label: s.user || 'Sesja',
+                            };
+                          }).filter(d => d.duration > 0);
+
+                          if (ganttData.length === 0) {
+                            return <div className="text-center text-gray-400 py-8">Brak sesji w tym dniu</div>;
+                          }
+
+                          return (
+                            <div className="h-40 w-full">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart
+                                  layout="vertical"
+                                  data={ganttData}
+                                  margin={{ top: 20, right: 10, left: 0, bottom: 20 }}
+                                >
+                                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={true} stroke="#e5e7eb" />
+                                  <XAxis
+                                    type="number"
+                                    domain={[0, 24]}
+                                    tickCount={13}
+                                    tickFormatter={(v) => `${v}:00`}
+                                    fontSize={9}
+                                    stroke="#9ca3af"
+                                    label={{ value: 'Godzina', position: 'insideBottom', offset: -10, fontSize: 9, fill: '#9ca3af' }}
+                                  />
+                                  <YAxis
+                                    type="category"
+                                    dataKey="id"
+                                    fontSize={9}
+                                    stroke="#9ca3af"
+                                    width={60}
+                                    tickFormatter={(val) => {
+                                      const item = ganttData.find(d => d.id === val);
+                                      return item ? (item.label.length > 8 ? item.label.substring(0, 8) + '…' : item.label) : '';
+                                    }}
+                                  />
+                                  <Tooltip
+                                    content={({ payload, label }) => {
+                                      if (!payload || !payload.length) return null;
+                                      const item = payload[0].payload;
+                                      if (!item || !item.range) return null;
+                                      const [start, end] = item.range;
+                                      const duration = end - start;
+                                      return (
+                                        <div style={{ backgroundColor: '#1f2937', padding: '8px 12px', borderRadius: '8px', color: '#fff', fontSize: '11px', maxWidth: '200px' }}>
+                                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>{item.label}</div>
+                                          <div>{duration.toFixed(1)}h ({start.toFixed(1)} – {end.toFixed(1)})</div>
+                                        </div>
+                                      );
+                                    }}
+                                    cursor={{ fill: 'transparent' }}
+                                    contentStyle={{ backgroundColor: '#1f2937', color: '#fff', borderRadius: '8px', border: 'none' }}
+                                  />
+                                  <Bar
+                                    dataKey="range"
+                                    shape={<GanttBar />}
+                                    isAnimationActive={false}
+                                  />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          );
+                        })()}
+                      </>
                     )}
-                    <p className="text-[9px] text-gray-400 mt-1">Każdy słupek to para sesji, które nachodziły na siebie w czasie (data rozpoczęcia przecięcia).</p>
+                    <p className="text-[9px] text-gray-400 mt-1">Kliknij dzień, aby zobaczyć nakładanie się sesji w tym dniu.</p>
                   </div>
                 </div>
 
