@@ -90,7 +90,13 @@ const GanttBar = (props) => {
   const label = payload.label || '';
   const yIndex = payload.id || 0;
   
-  const colors = ['#3b82f6', '#f97316', '#8b5cf6', '#10b981', '#ef4444', '#f59e0b', '#ec4899'];
+  // Odcienie zieleni (od jasnego do ciemnego)
+  const colors = [
+    '#22c55e',
+    '#16a34a',
+    '#15803d',
+    '#166534',
+  ];
   const color = colors[yIndex % colors.length];
 
   return (
