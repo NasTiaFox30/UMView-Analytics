@@ -1,15 +1,13 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, Cell, LineChart, Line, ComposedChart, Scatter, ScatterChart,
-  Legend, Area, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
-  Treemap
+  ReferenceArea, ReferenceLine, ReferenceDot, LineChart, Line, ComposedChart, Scatter, ScatterChart,
+  Legend, Area
 } from 'recharts';
 import {
   UploadCloud, Clock, Calendar, TrendingUp, LayoutDashboard, Calculator,
-  Compass, Activity, Zap, BarChart3, Layers, PieChart, GitBranch,
-  AlertCircle, CheckCircle, Info, Maximize2, Minimize2, Download,
-  Filter, Sun, Moon, Cloud, Server, Users, Cpu, Database, RefreshCw
+  Compass, Activity, Zap, BarChart3, Layers, GitBranch,
+  Info, Server, Cloud, AlertCircle, ChevronUp, ChevronDown
 } from 'lucide-react';
 import DataModelSimulator from './DataModelSimulator';
 import NoDataModelSimulator from './NoDataModelSimulator';
@@ -65,17 +63,23 @@ const stddev = (arr) => {
   return Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / (arr.length - 1));
 };
 
-const getDayName = (dateStr) => {
-  const parts = dateStr.split('.');
-  if (parts.length !== 3) return '—';
-  const d = new Date(parts[2], parts[1] - 1, parts[0]);
-  return DAY_NAMES[d.getDay()];
-};
-
-const getMonthName = (dateStr) => {
-  const parts = dateStr.split('.');
-  if (parts.length !== 3) return '—';
-  return MONTH_NAMES[parseInt(parts[1], 10) - 1];
+// Об'єднання інтервалів на одному дні
+const mergeIntervals = (intervals) => {
+  if (intervals.length === 0) return 0;
+  const sorted = intervals.sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let [start, end] = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    const [s, e] = sorted[i];
+    if (s <= end) {
+      end = Math.max(end, e);
+    } else {
+      total += (end - start) / (3600 * 1000);
+      [start, end] = [s, e];
+    }
+  }
+  total += (end - start) / (3600 * 1000);
+  return total;
 };
 
 // ============ ОСНОВНИЙ КОМПОНЕНТ ============
@@ -90,10 +94,8 @@ function App() {
   const [pivotState, setPivotState] = useState(null);
   const [sessionDurations, setSessionDurations] = useState([]);
   const [timelineData, setTimelineData] = useState([]);
-  const [savingsForecast, setSavingsForecast] = useState([]);
-  const [overlapData, setOverlapData] = useState([]);
-  const [expandedCard, setExpandedCard] = useState(null);
-  const [chartView, setChartView] = useState('all');
+  const [overlapStats, setOverlapStats] = useState({ totalOverlap: 0, details: [] });
+  const [showModelA, setShowModelA] = useState(false); // domyślnie zwinięte
 
   // ============ ОБРОБКА ФАЙЛУ ============
   const handleFileUpload = useCallback((e) => {
@@ -124,7 +126,6 @@ function App() {
       const userIndex = findIndex(['uruchamiający', 'uruchamiaj', 'user', 'kto']);
       const reasonIndex = findIndex(['powód', 'powod', 'komentarz', 'uwagi']);
 
-      const parsedData = [];
       const rawSessions = [];
       const allDurations = [];
 
@@ -142,37 +143,45 @@ function App() {
 
         let sessionDateStr = rawDate;
         let sessionHours = parsedHours;
-        let wasSplit = false;
+        let startDateObj = null;
+        let stopDateObj = null;
 
+        // Пріоритет: якщо є start/stop – використовуємо їх
         if (rawStartDate && rawStopDate) {
           const startDate = parseDateTime(rawStartDate);
           const endDate = parseDateTime(rawStopDate);
           if (startDate && endDate && endDate > startDate) {
-            wasSplit = true;
+            startDateObj = startDate;
+            stopDateObj = endDate;
             sessionDateStr = formatDate(startDate);
             sessionHours = (endDate - startDate) / (3600 * 1000);
+          }
+        }
 
-            let current = new Date(startDate);
-            while (current < endDate) {
-              const nextMidnight = new Date(current.getFullYear(), current.getMonth(), current.getDate() + 1, 0, 0, 0, 0);
-              if (nextMidnight >= endDate) {
-                const segHours = (endDate - current) / (3600 * 1000);
-                parsedData.push({ date: formatDate(current), hours: parseFloat(segHours.toFixed(2)), user, reason });
-                break;
-              } else {
-                const segHours = (nextMidnight - current) / (3600 * 1000);
-                parsedData.push({ date: formatDate(current), hours: parseFloat(segHours.toFixed(2)), user, reason });
-                current = nextMidnight;
-              }
+        // Якщо немає start/stop, але є rawDate і parsedHours – будуємо умовний інтервал
+        if (!startDateObj && rawDate) {
+          const dateParts = rawDate.split(' ');
+          if (dateParts.length === 2) {
+            const d = parseDateTime(rawDate);
+            if (d) {
+              startDateObj = d;
+              stopDateObj = new Date(d.getTime() + parsedHours * 3600 * 1000);
+              sessionDateStr = formatDate(d);
+              sessionHours = parsedHours;
+            }
+          } else {
+            const d = new Date(rawDate.split('.').reverse().join('-'));
+            if (!isNaN(d)) {
+              startDateObj = new Date(d);
+              startDateObj.setHours(0, 0, 0, 0);
+              stopDateObj = new Date(startDateObj.getTime() + parsedHours * 3600 * 1000);
+              sessionDateStr = formatDate(startDateObj);
+              sessionHours = parsedHours;
             }
           }
         }
 
-        if (!wasSplit && rawDate) {
-          parsedData.push({ date: rawDate, hours: parsedHours, user, reason });
-        }
-
-        if (sessionDateStr && sessionHours > 0) {
+        if (sessionDateStr && sessionHours > 0 && startDateObj && stopDateObj) {
           const dateParts = sessionDateStr.split('.');
           let dayName = '', monthStr = '', dateObj = null;
           if (dateParts.length === 3) {
@@ -181,35 +190,93 @@ function App() {
             monthStr = MONTH_NAMES[parseInt(dateParts[1], 10) - 1];
           }
           const h = parseFloat(sessionHours.toFixed(2));
-          rawSessions.push({ date: sessionDateStr, hours: h, user, reason, dayName, monthStr, dateObj });
+          rawSessions.push({
+            date: sessionDateStr,
+            hours: h,
+            user,
+            reason,
+            dayName,
+            monthStr,
+            dateObj,
+            startDate: startDateObj,
+            stopDate: stopDateObj,
+          });
           allDurations.push(h);
         }
       }
 
-      // === АГРЕГАЦІЯ ПО ДНЯХ ===
-      const daysMap = {};
-      parsedData.forEach(item => {
-        if (!item.date || isNaN(item.hours) || item.hours === 0) return;
-        if (!daysMap[item.date]) daysMap[item.date] = { date: item.date, hours: 0, reasons: [], user: item.user };
-        daysMap[item.date].hours += item.hours;
-        if (item.reason && !daysMap[item.date].reasons.includes(item.reason)) {
-          daysMap[item.date].reasons.push(item.reason);
+      // ====== ОБЧИСЛЕННЯ АКТИВНИХ ГОДИН НА ДЕНЬ (ОБ'ЄДНАННЯ ІНТЕРВАЛІВ) ======
+      const dailyMap = {};
+
+      rawSessions.forEach(s => {
+        if (!s.startDate || !s.stopDate) return;
+        let start = new Date(s.startDate);
+        let end = new Date(s.stopDate);
+        const dayStartMs = new Date(start);
+        dayStartMs.setHours(0, 0, 0, 0);
+        const dayEndMs = new Date(dayStartMs);
+        dayEndMs.setDate(dayEndMs.getDate() + 1);
+
+        while (start < end) {
+          const dayKey = formatDate(start);
+          const clipStart = Math.max(start.getTime(), dayStartMs.getTime());
+          const clipEnd = Math.min(end.getTime(), dayEndMs.getTime());
+          if (clipStart < clipEnd) {
+            if (!dailyMap[dayKey]) {
+              dailyMap[dayKey] = { unionIntervals: [], otherHours: 0, total: 0, reasons: [], users: new Set() };
+            }
+            dailyMap[dayKey].unionIntervals.push([clipStart, clipEnd]);
+            dailyMap[dayKey].users.add(s.user);
+            if (s.reason && !dailyMap[dayKey].reasons.includes(s.reason)) {
+              dailyMap[dayKey].reasons.push(s.reason);
+            }
+          }
+          start = new Date(dayEndMs);
+          dayStartMs.setDate(dayStartMs.getDate() + 1);
+          dayEndMs.setDate(dayEndMs.getDate() + 1);
         }
       });
 
-      const formattedData = Object.values(daysMap).map(d => {
-        const dateParts = d.date.split('.');
+      rawSessions.forEach(s => {
+        if (!s.startDate || !s.stopDate) {
+          const dayKey = s.date;
+          if (!dailyMap[dayKey]) {
+            dailyMap[dayKey] = { unionIntervals: [], otherHours: 0, total: 0, reasons: [], users: new Set() };
+          }
+          dailyMap[dayKey].otherHours += s.hours;
+          dailyMap[dayKey].users.add(s.user);
+          if (s.reason && !dailyMap[dayKey].reasons.includes(s.reason)) {
+            dailyMap[dayKey].reasons.push(s.reason);
+          }
+        }
+      });
+
+      Object.keys(dailyMap).forEach(date => {
+        const day = dailyMap[date];
+        day.unionHours = mergeIntervals(day.unionIntervals);
+        day.total = day.unionHours + day.otherHours;
+      });
+
+      const formattedData = Object.keys(dailyMap).map(date => {
+        const day = dailyMap[date];
+        const dateParts = date.split('.');
         const dateObj = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
+        const dayName = DAY_NAMES[dateObj.getDay()];
+        const monthStr = MONTH_NAMES[parseInt(dateParts[1], 10) - 1];
         return {
-          ...d,
-          dayName: DAY_NAMES[dateObj.getDay()],
-          monthStr: MONTH_NAMES[parseInt(dateParts[1], 10) - 1],
+          date,
+          hours: day.total,
+          unionHours: day.unionHours,
+          otherHours: day.otherHours,
+          dayName,
+          monthStr,
           dateObj,
-          reason: d.reasons.join(' | ')
+          reason: day.reasons.join(' | '),
+          user: Array.from(day.users).join(', '),
         };
       }).sort((a, b) => a.dateObj - b.dateObj);
 
-      // === МІСЯЧНІ ОБЛАСТІ ДЛЯ ГРАФІКА ===
+      // ====== ПОДАЛЬШІ ОБЧИСЛЕННЯ ======
       const mAreas = [];
       let currentMonthStr = null;
       let startIdx = 0;
@@ -236,26 +303,30 @@ function App() {
         });
       }
 
-      // === ТИЖНЕВА СТАТИСТИКА ===
       const daysTotals = { Pn: 0, Wt: 0, Śr: 0, Cz: 0, Pt: 0, Sb: 0, Nd: 0 };
       formattedData.forEach(d => { if (d.dayName && daysTotals[d.dayName] !== undefined) daysTotals[d.dayName] += d.hours; });
       const weeklyArr = DAY_ORDER.map(day => ({ day, hours: parseFloat(daysTotals[day].toFixed(2)) }));
 
-      // === ГОДИННИЙ HEATMAP (по днях тижня) ===
       const heatmapData = {};
       DAY_ORDER.forEach(day => { heatmapData[day] = {}; for (let h = 0; h < 24; h++) heatmapData[day][h] = 0; });
-      // Для heatmap використовуємо сирі сесії з часом початку (якщо є)
-      // Спрощено: розподіляємо години рівномірно по днях з даних
-      formattedData.forEach(d => {
-        if (d.dayName && heatmapData[d.dayName]) {
-          // Розподіляємо години приблизно рівномірно між 8:00 та 18:00 (робочий день)
-          const baseHour = 8 + Math.floor(Math.random() * 10); // наближення
-          for (let h = 0; h < 24; h++) {
-            const weight = (h >= 8 && h <= 18) ? 0.9 : 0.1;
-            heatmapData[d.dayName][h] += d.hours * (weight / 24);
+
+      rawSessions.forEach(s => {
+        if (s.startDate && s.stopDate && s.dayName) {
+          const startHour = s.startDate.getHours() + s.startDate.getMinutes() / 60;
+          const endHour = s.stopDate.getHours() + s.stopDate.getMinutes() / 60;
+          if (endHour <= startHour) return;
+          const totalDuration = endHour - startHour;
+          for (let h = Math.floor(startHour); h < Math.ceil(endHour); h++) {
+            const hourStart = Math.max(startHour, h);
+            const hourEnd = Math.min(endHour, h + 1);
+            const fraction = Math.max(0, hourEnd - hourStart);
+            if (fraction > 0 && heatmapData[s.dayName] && heatmapData[s.dayName][h] !== undefined) {
+              heatmapData[s.dayName][h] += s.hours * (fraction / totalDuration);
+            }
           }
         }
       });
+
       const heatmapArr = DAY_ORDER.flatMap(day =>
         Array.from({ length: 24 }, (_, h) => ({
           day,
@@ -264,7 +335,6 @@ function App() {
         }))
       );
 
-      // === ТАЙМЛАЙН ===
       const timeline = formattedData.map(d => ({
         date: d.date,
         hours: d.hours,
@@ -272,34 +342,55 @@ function App() {
         monthStr: d.monthStr
       }));
 
-      // === ПРОГНОЗ ЕКОНОМІЇ (Waterfall) ===
-      const totalHours = formattedData.reduce((s, d) => s + d.hours, 0);
-      const avgDaily = formattedData.length > 0 ? totalHours / formattedData.length : 0;
-      const peakDay = Math.max(...formattedData.map(d => d.hours), 0);
-      const baseCost = totalHours * 6.5; // przyjęta stawka za godzinę
-      const savingsScenarios = [
-        { name: 'Obecny (stały)', cost: baseCost, savings: 0 },
-        { name: 'Optymalizacja dni', cost: baseCost * 0.7, savings: baseCost * 0.3 },
-        { name: 'On-demand', cost: baseCost * 0.5, savings: baseCost * 0.5 },
-        { name: 'Scale-to-Zero', cost: baseCost * 0.2, savings: baseCost * 0.8 },
-      ];
-
-      // === ПЕРЕКРИТТЯ СЕСІЙ (симуляція) ===
-      const overlapSim = [];
-      if (rawSessions.length > 1) {
-        for (let i = 0; i < Math.min(rawSessions.length, 30); i++) {
-          const s = rawSessions[i];
-          const overlap = (i > 0 && rawSessions[i - 1]) ? Math.min(s.hours, rawSessions[i - 1].hours) * 0.3 : 0;
-          overlapSim.push({
-            session: i + 1,
-            hours: s.hours,
-            overlap: parseFloat(overlap.toFixed(2)),
-            day: s.dayName || '—'
-          });
+      // Перекриття сесій (z datami)
+      let totalOverlap = 0;
+      const overlapDetails = [];
+      for (let i = 0; i < rawSessions.length; i++) {
+        const a = rawSessions[i];
+        if (!a.startDate || !a.stopDate) continue;
+        for (let j = i + 1; j < rawSessions.length; j++) {
+          const b = rawSessions[j];
+          if (!b.startDate || !b.stopDate) continue;
+          const overlapStart = Math.max(a.startDate.getTime(), b.startDate.getTime());
+          const overlapEnd = Math.min(a.stopDate.getTime(), b.stopDate.getTime());
+          if (overlapStart < overlapEnd) {
+            const overlapHours = (overlapEnd - overlapStart) / (3600 * 1000);
+            totalOverlap += overlapHours;
+            const overlapDate = new Date(overlapStart);
+            const dateStr = formatDate(overlapDate);
+            overlapDetails.push({
+              sessionA: i + 1,
+              sessionB: j + 1,
+              overlapHours: parseFloat(overlapHours.toFixed(2)),
+              day: a.dayName || '—',
+              date: dateStr,
+              overlapStart: overlapStart
+            });
+          }
         }
       }
+      // const overlapDisplay = overlapDetails.slice(0, 30).map((item, idx) => ({ ...item, id: idx + 1 }));
+      // Grupowanie przecięć według daty
+      const overlapByDate = {};
+      overlapDetails.forEach(item => {
+        const dateKey = item.date;
+        if (!overlapByDate[dateKey]) {
+          overlapByDate[dateKey] = { date: dateKey, totalOverlapHours: 0, count: 0 };
+        }
+        overlapByDate[dateKey].totalOverlapHours += item.overlapHours;
+        overlapByDate[dateKey].count += 1;
+      });
 
-      // === PIVOT TABLE ===
+      const overlapDisplay = Object.values(overlapByDate)
+        .map((item, idx) => ({
+          id: idx + 1,
+          date: item.date,
+          overlapHours: parseFloat(item.totalOverlapHours.toFixed(2)),
+          count: item.count,
+        }))
+        .sort((a, b) => a.date.localeCompare(b.date)); // sortowanie chronologiczne
+
+      // Pivot table
       const activeMonthsSet = new Set();
       formattedData.forEach(d => { if (d.monthStr) activeMonthsSet.add(d.monthStr); });
       const activeMonths = MONTH_NAMES.filter(m => activeMonthsSet.has(m));
@@ -343,43 +434,58 @@ function App() {
         maxColTotal
       });
 
-      // === ФІНАЛЬНІ СТАТИСТИКИ ===
+      // ====== ФІНАЛЬНІ СТАТИСТИКИ ======
       const allHours = formattedData.map(d => d.hours);
-      const total = allHours.reduce((s, v) => s + v, 0);
+      const total = allHours.reduce((s, v) => s + v, 0); // union — bez podwójnego liczenia nakładających się sesji
+      const sumHours = rawSessions.reduce((s, v) => s + v.hours, 0); // suma sesji — zgadza się z "Razem" w raporcie źródłowym
       const avg = allHours.length > 0 ? total / allHours.length : 0;
       const med = median(allHours);
       const std = stddev(allHours);
       const activeDays = formattedData.length;
-      const utilRate = activeDays > 0 ? total / (activeDays * 24) : 0;
-      const peakHours = Math.max(...allHours, 0);
       const totalSessions = rawSessions.length;
 
-      // Простої: дні без активності (якщо є діапазон дат)
-      let downtime = 0;
-      if (formattedData.length > 1) {
-        const dates = formattedData.map(d => d.dateObj.getTime()).sort((a, b) => a - b);
-        const range = dates[dates.length - 1] - dates[0];
-        const activeTime = formattedData.reduce((s, d) => s + d.hours, 0) * 3600 * 1000;
-        downtime = Math.max(0, range - activeTime);
-        downtime = downtime / (3600 * 1000);
+      // --- Wykorzystanie i Przestoje w odniesieniu do Modelu A (cyklicznego) ---
+      // Liczymy wszystkie dni robocze (pn–pt) w całym okresie od pierwszej do ostatniej daty
+      let totalWorkingDays = 0;
+      if (formattedData.length > 0) {
+        const firstDate = new Date(formattedData[0].dateObj);
+        const lastDate = new Date(formattedData[formattedData.length - 1].dateObj);
+        firstDate.setHours(0, 0, 0, 0);
+        lastDate.setHours(0, 0, 0, 0);
+        let current = new Date(firstDate);
+        while (current <= lastDate) {
+          const dayOfWeek = current.getDay();
+          if (dayOfWeek >= 1 && dayOfWeek <= 5) totalWorkingDays++;
+          current.setDate(current.getDate() + 1);
+        }
       }
+
+      const potentialHours = totalWorkingDays * 8; // 8h dziennie
+      const utilRate = potentialHours > 0 ? total / potentialHours : 0;
+      const downtime = Math.max(0, potentialHours - total);
+
+      // ============================================================
+
+      const peakHours = Math.max(...allHours, 0);
 
       setData(formattedData);
       setSessions(rawSessions);
       setSessionDurations(allDurations);
       setTimelineData(timeline);
       setHourlyHeatmap(heatmapArr);
-      setSavingsForecast(savingsScenarios);
-      setOverlapData(overlapSim);
+      setOverlapStats({ totalOverlap, details: overlapDisplay });
       setMonthAreas(mAreas);
       setWeeklyStats(weeklyArr);
       setSummary({
         totalSessions,
         totalHours: total,
+        sumHours,
+        overlapHours: totalOverlap,
         avgHours: avg,
         medianHours: med,
         stdDev: std,
         activeDays,
+        totalWorkingDays,
         utilizationRate: utilRate,
         peakHours,
         downtime,
@@ -390,15 +496,28 @@ function App() {
   }, []);
 
   // ============ МЕМО ДЛЯ ВІЗУАЛІЗАЦІЙ ============
-  const maxHoursVal = useMemo(() => {
-    if (data.length === 0) return 0;
-    return Math.max(...data.map(d => d.hours), 0);
-  }, [data]);
-
   const maxWeeklyDay = useMemo(() => {
     if (weeklyStats.length === 0) return null;
     return [...weeklyStats].sort((a, b) => b.hours - a.hours)[0]?.day || null;
   }, [weeklyStats]);
+
+  const monthlyStats = useMemo(() => {
+    const totals = {};
+    data.forEach(d => {
+      if (d.monthStr) {
+        totals[d.monthStr] = (totals[d.monthStr] || 0) + d.hours;
+      }
+    });
+    // Sort months chronologically by MONTH_NAMES order
+    return Object.entries(totals)
+      .map(([month, hours]) => ({ month, hours: parseFloat(hours.toFixed(2)) }))
+      .sort((a, b) => MONTH_NAMES.indexOf(a.month) - MONTH_NAMES.indexOf(b.month));
+  }, [data]);
+
+  const maxMonth = useMemo(() => {
+    if (monthlyStats.length === 0) return null;
+    return [...monthlyStats].sort((a, b) => b.hours - a.hours)[0]?.month || null;
+  }, [monthlyStats]);
 
   const getPivotCellClass = (val, isHighlight) => {
     if (isHighlight) return 'bg-orange-500 text-white border-orange-600 shadow-inner font-bold';
@@ -410,8 +529,19 @@ function App() {
     return 'bg-blue-100 text-blue-900';
   };
 
+  const durationStats = useMemo(() => {
+    if (!sessionDurations.length) return { min: 0, q1: 0, q3: 0, max: 0 };
+    const sorted = [...sessionDurations].sort((a, b) => a - b); // kopia — nie mutujemy stanu
+    return {
+      min: sorted[0],
+      q1: sorted[Math.floor(sorted.length * 0.25)] ?? sorted[0],
+      q3: sorted[Math.floor(sorted.length * 0.75)] ?? sorted[sorted.length - 1],
+      max: sorted[sorted.length - 1],
+    };
+  }, [sessionDurations]);
+
   // ============ КОМПОНЕНТ KPI КАРТКИ ============
-  const KPICard = ({ icon: Icon, label, value, sub, color = 'blue', badge }) => {
+  const KPICard = ({ icon: Icon, label, value, sub, color = 'blue', badge, tooltip }) => {
     const colors = {
       blue: 'bg-blue-50 border-blue-100 text-blue-700',
       green: 'bg-emerald-50 border-emerald-100 text-emerald-700',
@@ -422,7 +552,7 @@ function App() {
       gray: 'bg-gray-50 border-gray-100 text-gray-700',
     };
     return (
-      <div className={`p-3 rounded-xl border ${colors[color]} transition-all hover:shadow-sm`}>
+      <div className={`p-3 rounded-xl border ${colors[color]} transition-all hover:shadow-sm relative`}>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-2">
             <div className={`p-1.5 rounded-lg ${colors[color].replace('bg-', 'bg-').replace('border-', 'border-')} bg-opacity-30`}>
@@ -431,6 +561,11 @@ function App() {
             <span className="text-[10px] font-medium uppercase tracking-wide opacity-70">{label}</span>
           </div>
           {badge && <span className="text-[9px] bg-white/60 px-1.5 py-0.5 rounded-full">{badge}</span>}
+          {tooltip && (
+            <div className="absolute top-1 right-1 text-gray-400 hover:text-gray-600 cursor-help" title={tooltip}>
+              <Info size={12} />
+            </div>
+          )}
         </div>
         <p className="text-xl font-bold mt-0.5">{value}</p>
         {sub && <p className="text-[10px] opacity-60 mt-0.5">{sub}</p>}
@@ -438,7 +573,7 @@ function App() {
     );
   };
 
-  // ============ РЕНДЕР ===
+  // ============ РЕНДЕР ============
   return (
     <div className="min-h-screen bg-gray-50 p-4 font-sans">
       <div className="max-w-7xl mx-auto space-y-4">
@@ -484,17 +619,131 @@ function App() {
             {data.length > 0 && summary ? (
               <div className="space-y-4">
 
-                {/* === ROW 1: KPI CARDS === */}
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                  <KPICard icon={Activity} label="Sesje" value={summary.totalSessions} sub={`${summary.activeDays} dni aktywnych`} color="blue" />
-                  <KPICard icon={Clock} label="Godziny łącznie" value={fmtNum(summary.totalHours)} sub={`śr. ${fmtNum(summary.avgHours)}/dzień`} color="green" />
-                  <KPICard icon={TrendingUp} label="Mediana" value={fmtNum(summary.medianHours)} sub={`σ = ${fmtNum(summary.stdDev)}`} color="purple" />
-                  <KPICard icon={Zap} label="Szczyt" value={fmtNum(summary.peakHours)} sub={`${summary.maxDay?.date || '—'}`} color="orange" />
-                  <KPICard icon={Calendar} label="Wykorzystanie" value={fmtPct(summary.utilizationRate)} sub={`${summary.activeDays} dni`} color="teal" />
-                  <KPICard icon={Cloud} label="Przestoje" value={fmtNum(summary.downtime)} sub="godz. bez aktywności" color="red" />
+                {/* === ROW 0: KPI CARDS === */}
+                <div className="space-y-3">
+                  {/* Główne metryki (bez Modelu A) */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                    <KPICard icon={Activity} label="Sesje" value={summary.totalSessions} sub={`${summary.activeDays} dni aktywnych`} color="blue" />
+                    <KPICard
+                      icon={Clock}
+                      label="Suma godzin sesji"
+                      value={fmtNum(summary.sumHours)}
+                      sub={`aktywny czas (bez nakładania): ${fmtNum(summary.totalHours)}h`}
+                      color="green"
+                      tooltip="Suma godzin wszystkich sesji z logu — ta liczba powinna zgadzać się z wierszem „Razem” w raporcie źródłowym. „Aktywny czas” to ta sama suma po usunięciu podwójnego liczenia nakładających się sesji."
+                    />
+                    <KPICard
+                      icon={Layers}
+                      label="Nakładanie się sesji"
+                      value={`${fmtNum(summary.overlapHours)}h`}
+                      sub={summary.overlapHours > 0.05 ? 'potwierdzona współbieżność' : 'brak wykrytych nakładań'}
+                      color={summary.overlapHours > 0.05 ? 'red' : 'gray'}
+                      tooltip="Godziny, w których realnie działały jednocześnie ≥2 sesje (porównanie znaczników start/stop). „Suma godzin sesji” minus to nakładanie = aktywny czas bez podwójnego liczenia."
+                    />
+                    <KPICard icon={TrendingUp} label="Mediana" value={fmtNum(summary.medianHours)} sub={`σ = ${fmtNum(summary.stdDev)}`} color="purple" tooltip="Odchylenie standardowe pokazuje, jak bardzo czasy sesji różnią się od średniej." />
+                    <KPICard icon={Zap} label="Szczyt" value={`${fmtNum(summary.peakHours)}h`} sub={`${summary.maxDay?.date || '—'}`} color="orange" />
+                  </div>
+
+                  {/* Model A – porównanie (cykliczny) – domyślnie zwinięte */}
+                  <div className="bg-gray-50/80 border border-gray-200 rounded-xl p-3">
+                    <div 
+                      className="flex items-center gap-2 cursor-pointer select-none" 
+                      onClick={() => setShowModelA(!showModelA)}
+                    >
+                      <div className="h-4 w-1 bg-teal-500 rounded-full"></div>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                        Model A (cykliczny) – porównanie
+                      </span>
+                      <span className="relative inline-flex ml-1 cursor-help" title="Model A zakłada stałą dostępność środowiska przez 8 godzin każdego dnia roboczego (pn–pt), niezależnie od faktycznego użycia. To hipotetyczny scenariusz, który pozwala oszacować potencjalne straty w porównaniu do elastycznego modelu On‑demand.">
+                        <Info size={12} className="text-gray-400 hover:text-gray-600" />
+                      </span>
+                      <span className="ml-auto">
+                        {showModelA ? <ChevronUp size={16} className="text-gray-500" /> : <ChevronDown size={16} className="text-gray-500" />}
+                      </span>
+                    </div>
+                    {showModelA && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          <KPICard 
+                            icon={Calendar} 
+                            label="Wykorzystanie" 
+                            value={fmtPct(summary.utilizationRate)} 
+                            sub={`założenie: 8h/dzień roboczy`} 
+                            color="teal" 
+                            tooltip="% wykorzystania WZGLĘDEM ZAŁOŻONEGO cyklicznego modelu (8h/dzień roboczy, pn–pt) — nie jest to nasz obecny koszt. Im niższy, tym większa potencjalna różnica względem On‑demand." 
+                          />
+                          <KPICard 
+                            icon={Cloud} 
+                            label="Przestoje" 
+                            value={fmtNum(summary.downtime)} 
+                            sub="godz. — hipotetyczny model cykliczny 8h/dzień" 
+                            color="gray" 
+                            tooltip="Godziny, które byłyby zmarnowane, GDYBY zastosowano cykliczny model (8h/dzień roboczy) — hipotetyczne porównanie, nie aktualny koszt." 
+                          />
+                        </div>
+                        <p className="text-[9px] text-gray-400 mt-2">
+                          ⚠️ „Wykorzystanie” i „Przestoje” odnoszą się do hipotetycznego <strong>Modelu A (cyklicznego)</strong> – nie do faktycznie ponoszonego kosztu w obecnym modelu On‑demand.
+                        </p>
+                      </>
+                    )}
+                  </div>
                 </div>
 
-                {/* === ROW 2: HISTOGRAM + BOXPLOT === */}
+                {/* === ROW 1: Timeline (wszystkie dni) === */}
+                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-[12px] font-semibold text-gray-700 flex items-center gap-1.5">
+                      <TrendingUp size={14} className="text-green-500" />
+                      Timeline aktywności
+                    </h3>
+                    <span className="text-[9px] text-gray-400">{timelineData.length} dni</span>
+                  </div>
+                  <div className="h-44 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={timelineData} margin={{ top: 5, right: 10, left: 0, bottom: 20 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                        <XAxis dataKey="date" fontSize={8} stroke="#9ca3af" tick={{ angle: -45, textAnchor: 'end' }} tickFormatter={(v) => v.substring(0, 5)} />
+                        <YAxis fontSize={9} stroke="#9ca3af" />
+                        <Tooltip contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }} />
+                        <Area type="monotone" dataKey="hours" fill="#10b981" stroke="#059669" fillOpacity={0.3} />
+                        {/* Межі місяців */}
+                        {monthAreas.slice(1).map((area, idx) => (
+                          <ReferenceLine key={`month-line-${idx}`} x={area.startX} stroke="#9ca3af" strokeDasharray="3 3" strokeWidth={1} />
+                        ))}
+                        {/* Oznaczenie dnia szczytowego */}
+                        {summary?.maxDay?.date && (
+                          <>
+                            <ReferenceLine x={summary.maxDay.date} stroke="#f97316" strokeDasharray="5 5" strokeWidth={2} />
+                            <ReferenceDot
+                              x={summary.maxDay.date}
+                              y={summary.maxDay.hours}
+                              r={6}
+                              fill="#f97316"
+                              stroke="#fff"
+                              strokeWidth={2}
+                              label={{
+                                value: 'szczyt',
+                                position: 'top',
+                                fill: '#f97316',
+                                fontSize: 9,
+                                fontWeight: 700,
+                                dy: -10,
+                              }}
+                            />
+                          </>
+                        )}
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <p className="text-[9px] text-gray-400 mt-1">
+                    Pełna historia aktywności (godziny = suma złączeń przedziałów) • 
+                  </p>
+                  <p className="text-[9px] text-gray-400 mt-1">
+                    Linie pionowe = granice miesięcy • Pionowa linia i kropka = dzień szczytowy (najwięcej godzin)
+                  </p>
+                </div>
+
+                {/* === ROW 2: Histogram + Heatmap === */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {/* Histogram czasów sesji */}
                   <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
@@ -508,12 +757,16 @@ function App() {
                     <div className="h-44 w-full">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={(() => {
+                          const CAP = 16; // godziny — powyżej wrzucamy do wspólnego bina, żeby wykres nie rozciągał się do 54h
                           const bins = {};
                           sessionDurations.forEach(h => {
-                            const key = Math.floor(h / 2) * 2;
+                            const key = h >= CAP ? CAP : Math.floor(h / 2) * 2;
                             bins[key] = (bins[key] || 0) + 1;
                           });
-                          return Object.entries(bins).map(([k, v]) => ({ range: `${k}-${+k+2}h`, count: v }));
+                          return Object.keys(bins)
+                            .map(Number)
+                            .sort((a, b) => a - b)
+                            .map(k => ({ range: k >= CAP ? `${CAP}h+` : `${k}-${k + 2}h`, count: bins[k] }));
                         })()} margin={{ top: 5, right: 10, left: 0, bottom: 20 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
                           <XAxis dataKey="range" fontSize={9} stroke="#9ca3af" tick={{ angle: -20, textAnchor: 'end' }} />
@@ -523,55 +776,9 @@ function App() {
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
-                    <p className="text-[9px] text-gray-400 mt-1">Rozkład długości sesji (przedziały 2-godzinne)</p>
+                    <p className="text-[9px] text-gray-400 mt-1">Rozkład długości sesji (przedziały 2-godzinne, 16h+ zbiorczo)</p>
                   </div>
 
-                  {/* Boxplot (wizualizacja rozkładu) */}
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-[12px] font-semibold text-gray-700 flex items-center gap-1.5">
-                        <Layers size={14} className="text-purple-500" />
-                        Rozkład statystyczny
-                      </h3>
-                      <span className="text-[9px] text-gray-400">min–max, kwartyle</span>
-                    </div>
-                    <div className="h-44 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={[
-                          {
-                            name: 'Sesje',
-                            min: Math.min(...sessionDurations, 0),
-                            q1: sessionDurations.sort((a, b) => a - b)[Math.floor(sessionDurations.length * 0.25)] || 0,
-                            med: summary.medianHours,
-                            q3: sessionDurations.sort((a, b) => a - b)[Math.floor(sessionDurations.length * 0.75)] || 0,
-                            max: Math.max(...sessionDurations, 1),
-                          }
-                        ]} layout="vertical" margin={{ top: 5, right: 20, left: 10, bottom: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
-                          <XAxis type="number" fontSize={9} stroke="#9ca3af" domain={[0, 'dataMax + 2']} />
-                          <YAxis type="category" dataKey="name" fontSize={10} stroke="#6b7280" />
-                          <Tooltip contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }} />
-                          <Bar dataKey="min" fill="#d1d5db" stackId="a" />
-                          <Bar dataKey="q1" fill="#8b5cf6" stackId="a" />
-                          <Bar dataKey="med" fill="#7c3aed" stackId="a" />
-                          <Bar dataKey="q3" fill="#8b5cf6" stackId="a" />
-                          <Bar dataKey="max" fill="#d1d5db" stackId="a" />
-                          <Legend wrapperStyle={{ fontSize: 9 }} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="flex gap-3 text-[9px] text-gray-500 mt-1">
-                      <span>Min: {fmtNum(Math.min(...sessionDurations, 0))}h</span>
-                      <span>Q1: {fmtNum(sessionDurations.sort((a,b)=>a-b)[Math.floor(sessionDurations.length*0.25)] || 0)}h</span>
-                      <span>Med: {fmtNum(summary.medianHours)}h</span>
-                      <span>Q3: {fmtNum(sessionDurations.sort((a,b)=>a-b)[Math.floor(sessionDurations.length*0.75)] || 0)}h</span>
-                      <span>Max: {fmtNum(Math.max(...sessionDurations, 1))}h</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* === ROW 3: HEATMAP (dzień/godzina) + TIMELINE === */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   {/* Heatmap */}
                   <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                     <div className="flex items-center justify-between mb-3">
@@ -579,124 +786,159 @@ function App() {
                         <Activity size={14} className="text-orange-500" />
                         Heatmap aktywności (dzień × godzina)
                       </h3>
+                      <span className="text-[9px] text-gray-400">realne godziny</span>
                     </div>
-                    <div className="h-44 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ScatterChart margin={{ top: 5, right: 10, left: 0, bottom: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                          <XAxis type="category" dataKey="day" fontSize={9} stroke="#9ca3af" />
-                          <YAxis type="number" dataKey="hour" fontSize={9} stroke="#9ca3af" domain={[0, 23]} tickFormatter={(v) => `${v}:00`} />
-                          <Tooltip 
-                            contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }}
-                            formatter={(v, name) => {
-                              const num = typeof v === 'number' ? v : parseFloat(v);
-                              return [isNaN(num) ? '—' : num.toFixed(1) + 'h', name === 'value' ? 'Aktywność' : name];
-                            }} 
-                          />
-                          <Scatter data={hourlyHeatmap} fill="#3b82f6" shape="circle">
-                            {hourlyHeatmap.map((entry, idx) => (
-                              <Cell 
-                                key={idx} 
-                                fill={entry.value > 1 ? '#f97316' : entry.value > 0.5 ? '#3b82f6' : '#93c5fd'} 
-                                r={entry.value > 0 ? 4 + Math.min(Number(entry.value) || 0, 6) : 1} 
-                              />
-                            ))}
-                          </Scatter>
-                        </ScatterChart>
-                      </ResponsiveContainer>
+                    <div className="w-full overflow-x-auto">
+                      <div className="min-w-[500px]">
+                        <div className="flex items-center justify-end gap-2 mb-1.5">
+                          <span className="text-[8px] text-gray-400">niska</span>
+                          <div className="flex h-2.5 rounded overflow-hidden">
+                            <div className="w-4 bg-blue-100" />
+                            <div className="w-4 bg-blue-300" />
+                            <div className="w-4 bg-blue-500" />
+                            <div className="w-4 bg-blue-700" />
+                            <div className="w-4 bg-blue-900" />
+                          </div>
+                          <span className="text-[8px] text-gray-400">wysoka</span>
+                        </div>
+                        <div className="grid" style={{ gridTemplateColumns: '40px repeat(24, 1fr)', gap: '1px' }}>
+                          <div className="text-[8px] text-gray-400 font-medium flex items-center justify-end pr-1">dzień \ godz.</div>
+                          {Array.from({ length: 24 }, (_, h) => (
+                            <div key={`h-${h}`} className="text-[7px] text-gray-400 text-center font-mono">{h}:00</div>
+                          ))}
+                          {DAY_ORDER.map(day => {
+                            const dayData = hourlyHeatmap.filter(d => d.day === day);
+                            const maxVal = Math.max(...dayData.map(d => d.value), 0.1);
+                            return (
+                              <React.Fragment key={day}>
+                                <div className="text-[9px] font-medium text-gray-600 flex items-center justify-end pr-1">{day}</div>
+                                {Array.from({ length: 24 }, (_, hour) => {
+                                  const entry = dayData.find(d => d.hour === hour);
+                                  const val = entry ? entry.value : 0;
+                                  const intensity = maxVal > 0 ? Math.min(val / maxVal, 1) : 0;
+                                  const color = val === 0
+                                    ? 'bg-gray-50'
+                                    : intensity > 0.8 ? 'bg-blue-900'
+                                    : intensity > 0.6 ? 'bg-blue-700'
+                                    : intensity > 0.4 ? 'bg-blue-500'
+                                    : intensity > 0.2 ? 'bg-blue-300'
+                                    : 'bg-blue-100';
+                                  return (
+                                    <div
+                                      key={`${day}-${hour}`}
+                                      className={`${color} h-5 rounded-sm transition-all hover:scale-110 hover:shadow-md cursor-pointer relative group`}
+                                      title={`${day} ${hour}:00 – ${val.toFixed(1)}h`}
+                                    >
+                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-1.5 py-0.5 bg-gray-800 text-white text-[8px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
+                                        {val > 0 ? `${val.toFixed(1)}h` : 'brak'}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-[9px] text-gray-400 mt-1">Розмір точки = інтенсивність використання (на основі даних)</p>
-                  </div>
-
-                  {/* Timeline */}
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-[12px] font-semibold text-gray-700 flex items-center gap-1.5">
-                        <TrendingUp size={14} className="text-green-500" />
-                        Timeline aktywności
-                      </h3>
-                      <span className="text-[9px] text-gray-400">{timelineData.length} dni</span>
-                    </div>
-                    <div className="h-44 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={timelineData.slice(-60)} margin={{ top: 5, right: 10, left: 0, bottom: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                          <XAxis dataKey="date" fontSize={8} stroke="#9ca3af" tick={{ angle: -45, textAnchor: 'end' }} tickFormatter={(v) => v.substring(0, 5)} />
-                          <YAxis fontSize={9} stroke="#9ca3af" />
-                          <Tooltip contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }} />
-                          <Area type="monotone" dataKey="hours" fill="#10b981" stroke="#059669" fillOpacity={0.3} />
-                          <Line type="monotone" dataKey="hours" stroke="#059669" strokeWidth={1.5} dot={false} />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <p className="text-[9px] text-gray-400 mt-1">Ostatnie 60 dni aktywności</p>
+                    <p className="text-[9px] text-gray-400 mt-2">
+                      Każda komórka = 1 godzina w danym dniu tygodnia • im ciemniejszy niebieski, tym większa aktywność
+                    </p>
                   </div>
                 </div>
 
-                {/* === ROW 4: WATERFALL EKONOMII + OVERLAP === */}
+                {/* === ROW 3: Profile tygodnia i miesiąca + Przecięcia === */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Waterfall - prognoza oszczędności */}
-                  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-[12px] font-semibold text-gray-700 flex items-center gap-1.5">
-                        <PieChart size={14} className="text-emerald-500" />
-                        Prognoza oszczędności (waterfall)
-                      </h3>
-                      <span className="text-[9px] text-gray-400">przy stawce 6,5 zł/h</span>
+                  {/* Lewa kolumna: Profil tygodnia + Profil miesiąca */}
+                  <div className="space-y-3">
+                    {/* Profil tygodnia */}
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <TrendingUp size={14} className="text-gray-500" />
+                        <h3 className="text-[12px] font-semibold text-gray-700">Profil tygodnia</h3>
+                      </div>
+                      <div className="grid grid-cols-7 gap-1.5">
+                        {weeklyStats.map((stat) => (
+                          <div key={stat.day} className={`text-center p-2 rounded-lg ${stat.day === maxWeeklyDay ? 'bg-orange-50 border border-red-200' : 'bg-gray-50'}`}>
+                            <p className={`text-[10px] font-medium ${stat.day === maxWeeklyDay ? 'text-red-700' : 'text-gray-500'}`}>{stat.day}</p>
+                            <p className={`text-[11px] font-bold ${stat.day === maxWeeklyDay ? 'text-red-700' : 'text-gray-700'}`}>
+                              {stat.hours > 0 ? `${stat.hours.toFixed(1)}h` : '—'}
+                            </p>
+                            {stat.day === maxWeeklyDay && <span className="text-[8px] text-red-500">🔥 szczyt</span>}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="h-44 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={savingsForecast} layout="vertical" margin={{ top: 5, right: 20, left: 60, bottom: 5 }}>
-                          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
-                          <XAxis type="number" fontSize={9} stroke="#9ca3af" tickFormatter={(v) => `${v} zł`} />
-                          <YAxis type="category" dataKey="name" fontSize={9} stroke="#6b7280" width={80} />
-                          <Tooltip contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }}
-                            formatter={(v) => `${v.toFixed(0)} zł`} />
-                          <Bar dataKey="cost" fill="#ef4444" radius={[0, 4, 4, 0]}>
-                            {savingsForecast.map((entry, idx) => (
-                              <Cell key={idx} fill={idx === 0 ? '#ef4444' : idx === 1 ? '#f97316' : idx === 2 ? '#3b82f6' : '#10b981'} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="flex flex-wrap gap-2 mt-1 text-[9px] text-gray-500">
-                      {savingsForecast.map((s, i) => (
-                        <span key={i} className="flex items-center gap-1">
-                          <span className={`w-2 h-2 rounded-full ${i === 0 ? 'bg-red-500' : i === 1 ? 'bg-orange-500' : i === 2 ? 'bg-blue-500' : 'bg-green-500'}`} />
-                          {s.name}: {s.savings > 0 ? `-${s.savings.toFixed(0)} zł` : '—'}
-                        </span>
-                      ))}
+
+                    {/* Profil miesiąca */}
+                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                      <div className="flex items-center gap-1.5 mb-3">
+                        <Calendar size={14} className="text-gray-500" />
+                        <h3 className="text-[12px] font-semibold text-gray-700">Profil miesiąca</h3>
+                      </div>
+                      {monthlyStats.length === 0 ? (
+                        <p className="text-[10px] text-gray-400">Brak danych miesięcznych</p>
+                      ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-1.5">
+                          {monthlyStats.map((stat) => (
+                            <div key={stat.month} className={`text-center p-2 rounded-lg ${stat.month === maxMonth ? 'bg-orange-50 border border-orange-300' : 'bg-gray-50'}`}>
+                              <p className={`text-[10px] font-medium ${stat.month === maxMonth ? 'text-orange-700' : 'text-gray-500'}`}>
+                                {stat.month.substring(0, 3)}
+                              </p>
+                              <p className={`text-[11px] font-bold ${stat.month === maxMonth ? 'text-orange-700' : 'text-gray-700'}`}>
+                                {stat.hours > 0 ? `${stat.hours.toFixed(1)}h` : '—'}
+                              </p>
+                              {stat.month === maxMonth && <span className="text-[8px] text-orange-500">🔥 szczyt</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Overlap sesji */}
+                  {/* Przecięcia sesji */}
                   <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="text-[12px] font-semibold text-gray-700 flex items-center gap-1.5">
                         <GitBranch size={14} className="text-red-500" />
-                        Przecięcia sesji (przykładowe)
+                        Przecięcia sesji (realne)
                       </h3>
-                      <span className="text-[9px] text-gray-400">{overlapData.length} sesji</span>
+                      <span className="text-[9px] text-gray-400">
+                        łącznie {overlapStats.totalOverlap.toFixed(1)} godz. przecięć
+                      </span>
                     </div>
-                    <div className="h-44 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={overlapData} margin={{ top: 5, right: 10, left: 0, bottom: 20 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                          <XAxis dataKey="session" fontSize={9} stroke="#9ca3af" label={{ value: 'sesja', position: 'insideBottom', offset: -5, fontSize: 8, fill: '#9ca3af' }} />
-                          <YAxis fontSize={9} stroke="#9ca3af" />
-                          <Tooltip contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }} />
-                          <Bar dataKey="hours" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Czas trwania" />
-                          <Bar dataKey="overlap" fill="#ef4444" radius={[4, 4, 0, 0]} name="Przecięcie" />
-                          <Legend wrapperStyle={{ fontSize: 9 }} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <p className="text-[9px] text-gray-400 mt-1">Czerwony = potencjalne przecięcie z poprzednią sesją (symulacja)</p>
+                    {overlapStats.details.length === 0 ? (
+                      <div className="flex items-center justify-center h-20 text-gray-400 text-sm">
+                        <AlertCircle size={16} className="mr-2" />
+                        Brak przecięć między sesjami.
+                      </div>
+                    ) : (
+                      <div className="h-44 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={overlapStats.details} margin={{ top: 5, right: 10, left: 0, bottom: 20 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                            <XAxis 
+                              dataKey="date" 
+                              fontSize={9} 
+                              stroke="#9ca3af"
+                              tick={{ angle: -30, textAnchor: 'end' }}
+                            />
+                            <YAxis fontSize={9} stroke="#9ca3af" />
+                            <Tooltip 
+                              contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }}
+                              formatter={(v, name) => [`${v.toFixed(1)} h`, name === 'overlapHours' ? 'Przecięcie' : name]}
+                              labelFormatter={(label) => `Data: ${label}`}
+                            />
+                            <Bar dataKey="overlapHours" fill="#ef4444" radius={[4, 4, 0, 0]} name="Godziny przecięcia" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+                    <p className="text-[9px] text-gray-400 mt-1">Każdy słupek to para sesji, które nachodziły na siebie w czasie (data rozpoczęcia przecięcia).</p>
                   </div>
                 </div>
 
-                {/* === ROW 5: PIVOT TABLE (pozostawiamy istniejącą) === */}
+                {/* === ROW 4: PIVOT TABLE === */}
                 {pivotState && (
                   <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
                     <div className="flex items-center justify-between mb-3">
@@ -765,25 +1007,6 @@ function App() {
                   </div>
                 )}
 
-                {/* === ROW 6: Weekly stats (zostawiamy) === */}
-                <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                  <div className="flex items-center gap-1.5 mb-3">
-                    <TrendingUp size={14} className="text-gray-500" />
-                    <h3 className="text-[12px] font-semibold text-gray-700">Profil tygodnia</h3>
-                  </div>
-                  <div className="grid grid-cols-7 gap-1.5">
-                    {weeklyStats.map((stat) => (
-                      <div key={stat.day} className={`text-center p-2 rounded-lg ${stat.day === maxWeeklyDay ? 'bg-red-50 border border-red-200' : 'bg-gray-50'}`}>
-                        <p className={`text-[10px] font-medium ${stat.day === maxWeeklyDay ? 'text-red-700' : 'text-gray-500'}`}>{stat.day}</p>
-                        <p className={`text-[11px] font-bold ${stat.day === maxWeeklyDay ? 'text-red-700' : 'text-gray-700'}`}>
-                          {stat.hours > 0 ? `${stat.hours.toFixed(1)}h` : '—'}
-                        </p>
-                        {stat.day === maxWeeklyDay && <span className="text-[8px] text-red-500">🔥 szczyt</span>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
               </div>
             ) : (
               <div className="bg-white p-12 rounded-xl shadow-sm border border-gray-100 text-center text-gray-400 flex flex-col items-center justify-center gap-3">
@@ -816,7 +1039,6 @@ function App() {
 
       <footer className="mt-8 text-center text-gray-400 text-[10px]">
         <p>Created by Anastasiia Bzova &copy; {new Date().getFullYear()} — v0.4 (beta)</p>
-        <p className="text-[9px] text-gray-300 mt-0.5">Automatyczne metryki: sesje, czasy, heatmap, waterfall, przecięcia, prognozy</p>
       </footer>
     </div>
   );
