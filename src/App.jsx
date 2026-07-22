@@ -831,7 +831,7 @@ function App() {
                       </h3>
                       <span className="text-[9px] text-gray-400">realne godziny</span>
                     </div>
-                    <div className="w-full overflow-x-auto">
+                    <div className="w-full">
                       <div className="min-w-[500px]">
                         <div className="flex items-center justify-end gap-2 mb-1.5">
                           <span className="text-[8px] text-gray-400">niska</span>
