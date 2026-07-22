@@ -7,7 +7,7 @@ import {
 import {
   UploadCloud, Clock, Calendar, TrendingUp, LayoutDashboard, Calculator,
   Compass, Activity, Zap, BarChart3, Layers, GitBranch,
-  Info, Server, Cloud, AlertCircle, ChevronUp, ChevronDown
+  Info, Server, Cloud, AlertCircle, ChevronUp, ChevronDown, Maximize2
 } from 'lucide-react';
 import DataModelSimulator from './DataModelSimulator';
 import NoDataModelSimulator from './NoDataModelSimulator';
@@ -668,15 +668,22 @@ function App() {
 
                 {/* === ROW 0: KPI CARDS === */}
                 <div className="space-y-3">
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2">
-                    <KPICard icon={Activity} label="Sesje" value={summary.totalSessions} sub={`${summary.activeDays} dni aktywnych`} color="blue" />
+                  {/* Główne metryki */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                    <KPICard icon={Activity} 
+                      label="Sesje" 
+                      value={summary.totalSessions} 
+                      sub={`${summary.activeDays} dni aktywnych`} 
+                      color="blue" 
+                      tooltip="W jednym dniu może występować >1 sesji – np. jeśli sesje nakładają się lub są uruchamiane przez różnych użytkowników."
+                    />
                     <KPICard
                       icon={Clock}
                       label="Suma godzin sesji"
                       value={fmtNum(summary.sumHours)}
                       sub={`aktywny czas (bez nakładania): ${fmtNum(summary.totalHours)}h`}
                       color="green"
-                      tooltip="Suma godzin wszystkich sesji z logu — ta liczba powinna zgadzać się z wierszem „Razem” w raporcie źródłowym. „Aktywny czas” to ta sama suma po usunięciu podwójnego liczenia nakładających się sesji."
+                      tooltip="Suma godzin wszystkich sesji z logu – zgodna z wierszem „Razem” w raporcie. Aktywny czas = suma po usunięciu podwójnego liczenia nakładających się sesji."
                     />
                     <KPICard
                       icon={Layers}
@@ -684,13 +691,38 @@ function App() {
                       value={`${fmtNum(summary.overlapHours)}h`}
                       sub={summary.overlapHours > 0.05 ? 'potwierdzona współbieżność' : 'brak wykrytych nakładań'}
                       color={summary.overlapHours > 0.05 ? 'red' : 'gray'}
-                      tooltip="Godziny, w których realnie działały jednocześnie ≥2 sesje (porównanie znaczników start/stop). „Suma godzin sesji” minus to nakładanie = aktywny czas bez podwójnego liczenia."
+                      tooltip="Godziny, w których działały jednocześnie ≥2 sesje (porównanie start/stop). Suma godzin sesji minus nakładanie = aktywny czas bez dubli."
                     />
-                    <KPICard icon={TrendingUp} label="Mediana" value={fmtNum(summary.medianHours)} sub={`σ = ${fmtNum(summary.stdDev)}`} color="purple" tooltip="Odchylenie standardowe pokazuje, jak bardzo czasy sesji różnią się od średniej." />
-                    <KPICard icon={Zap} label="Szczyt" value={`${fmtNum(summary.peakHours)}h`} sub={`${summary.maxDay?.date || '—'}`} color="orange" />
+
+                    {/* TRZY NOWE KARTY: ŚREDNIA, MEDIANA, NAJDŁUŻSZA */}
+                    <KPICard
+                      icon={BarChart3}
+                      label="Średnia sesja"
+                      value={`${fmtNum(summary.avgHours)}h`}
+                      sub={`z ${summary.totalSessions} sesji`}
+                      color="purple"
+                      tooltip="Średni czas trwania pojedynczej sesji."
+                    />
+                    <KPICard
+                      icon={TrendingUp}
+                      label="Mediana sesji"
+                      value={`${fmtNum(summary.medianHours)}h`}
+                      sub="wartość środkowa"
+                      color="purple"
+                      tooltip="Mediana czasu sesji – typowy czas, niezakłócony przez ekstremalnie długie sesje."
+                    />
+
+                    <KPICard 
+                      icon={Zap} 
+                      label="Szczyt" 
+                      value={`${fmtNum(summary.peakHours)}h`} 
+                      sub={`${summary.maxDay?.date || '—'}`} 
+                      color="orange" 
+                      tooltip="Najdłuższa sesja - dzień, w którym odnotowano najwięcej godzin aktywności."
+                    />
                   </div>
 
-                  {/* Model A */}
+                  {/* Model A – porównanie (cykliczny) – domyślnie zwinięte */}
                   <div className="bg-gray-50/80 border border-gray-200 rounded-xl p-3">
                     <div 
                       className="flex items-center gap-2 cursor-pointer select-none" 
@@ -716,7 +748,7 @@ function App() {
                             value={fmtPct(summary.utilizationRate)} 
                             sub={`założenie: 8h/dzień roboczy`} 
                             color="teal" 
-                            tooltip="% wykorzystania WZGLĘDEM ZAŁOŻONEGO cyklicznego modelu (8h/dzień roboczy, pn–pt) — nie jest to nasz obecny koszt. Im niższy, tym większa potencjalna różnica względem On‑demand." 
+                            tooltip="% wykorzystania WZGLĘDEM założonego cyklicznego modelu (8h/dzień roboczy, pn–pt) – im niższy, tym większa potencjalna różnica względem On‑demand." 
                           />
                           <KPICard 
                             icon={Cloud} 
@@ -724,7 +756,7 @@ function App() {
                             value={fmtNum(summary.downtime)} 
                             sub="godz. — hipotetyczny model cykliczny 8h/dzień" 
                             color="gray" 
-                            tooltip="Godziny, które byłyby zmarnowane w cyklicznym modelu (8h/dzień roboczy) — hipotetyczne porównanie." 
+                            tooltip="Godziny, które byłyby zmarnowane w cyklicznym modelu (8h/dzień roboczy) – hipotetyczne porównanie." 
                           />
                         </div>
                         <p className="text-[9px] text-gray-400 mt-2">
