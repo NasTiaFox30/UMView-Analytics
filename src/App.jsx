@@ -945,9 +945,62 @@ function App() {
                         <GitBranch size={14} className="text-red-500" />
                         Przecięcia sesji (realne)
                       </h3>
-                      <span className="text-[9px] text-gray-400">
-                        łącznie {overlapStats.totalOverlap.toFixed(1)} godz. przecięć
-                      </span>
+                      <div className="text-right">
+                        <span className="text-[9px] text-gray-400 block">
+                          łącznie {overlapStats.totalOverlap.toFixed(1)} godz. przecięć
+                        </span>
+                        {selectedOverlapDay && (() => {
+                          const dayStart = new Date(selectedOverlapDay.split('.').reverse().join('-'));
+                          dayStart.setHours(0, 0, 0, 0);
+                          const dayEnd = new Date(dayStart);
+                          dayEnd.setDate(dayEnd.getDate() + 1);
+
+                          const daySessions = sessions.filter(s => {
+                            if (!s.startDate || !s.stopDate) return false;
+                            return s.startDate < dayEnd && s.stopDate > dayStart;
+                          });
+
+                          const getOverlapIntervals = (sessions, dayStart, dayEnd) => {
+                            const intervals = sessions.map(s => {
+                              const start = Math.max(s.startDate.getTime(), dayStart.getTime());
+                              const end = Math.min(s.stopDate.getTime(), dayEnd.getTime());
+                              if (start >= end) return null;
+                              return [(start - dayStart.getTime()) / (3600 * 1000), (end - dayStart.getTime()) / (3600 * 1000)];
+                            }).filter(Boolean);
+
+                            const overlapIntervals = [];
+                            const step = 0.1;
+                            let inOverlap = false;
+                            let currentStart = 0;
+                            for (let t = 0; t < 24; t += step) {
+                              const coverCount = intervals.filter(([s, e]) => s <= t && t < e).length;
+                              if (coverCount >= 2 && !inOverlap) {
+                                inOverlap = true;
+                                currentStart = t;
+                              } else if ((coverCount < 2 || t >= 24 - step) && inOverlap) {
+                                inOverlap = false;
+                                overlapIntervals.push([Math.round(currentStart * 10) / 10, Math.round(t * 10) / 10]);
+                              }
+                            }
+                            return overlapIntervals;
+                          };
+
+                          const overlapIntervals = getOverlapIntervals(daySessions, dayStart, dayEnd);
+                          if (overlapIntervals.length === 0) return null;
+
+                          const overlapHoursText = overlapIntervals.map(([s, e]) => {
+                            const startStr = `${Math.floor(s)}:${String(Math.round((s % 1) * 60)).padStart(2, '0')}`;
+                            const endStr = `${Math.floor(e)}:${String(Math.round((e % 1) * 60)).padStart(2, '0')}`;
+                            return `${startStr} – ${endStr}`;
+                          }).join('; ');
+
+                          return (
+                            <span className="text-[9px] text-red-500 block mt-0.5 font-medium">
+                              {overlapHoursText}
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </div>
                     {overlapStats.details.length === 0 ? (
                       <div className="flex items-center justify-center h-20 text-gray-400 text-sm">
@@ -999,13 +1052,41 @@ function App() {
                             return <div className="text-center text-gray-400 py-8">Brak sesji w tym dniu</div>;
                           }
 
+                          const getOverlapIntervals = (sessions, dayStart, dayEnd) => {
+                            const intervals = sessions.map(s => {
+                              const start = Math.max(s.startDate.getTime(), dayStart.getTime());
+                              const end = Math.min(s.stopDate.getTime(), dayEnd.getTime());
+                              if (start >= end) return null;
+                              return [(start - dayStart.getTime()) / (3600 * 1000), (end - dayStart.getTime()) / (3600 * 1000)];
+                            }).filter(Boolean);
+
+                            const overlapIntervals = [];
+                            const step = 0.1;
+                            let inOverlap = false;
+                            let currentStart = 0;
+                            for (let t = 0; t < 24; t += step) {
+                              const coverCount = intervals.filter(([s, e]) => s <= t && t < e).length;
+                              if (coverCount >= 2 && !inOverlap) {
+                                inOverlap = true;
+                                currentStart = t;
+                              } else if ((coverCount < 2 || t >= 24 - step) && inOverlap) {
+                                inOverlap = false;
+                                overlapIntervals.push([Math.round(currentStart * 10) / 10, Math.round(t * 10) / 10]);
+                              }
+                            }
+                            return overlapIntervals;
+                          };
+
+                          const overlapIntervals = getOverlapIntervals(daySessions, dayStart, dayEnd);
+
                           return (
-                            <div className="h-40 w-full">
+                            <div className="h-44 w-full relative">
                               <ResponsiveContainer width="100%" height="100%">
                                 <BarChart
                                   layout="vertical"
                                   data={ganttData}
-                                  margin={{ top: 20, right: 10, left: 0, bottom: 20 }}
+                                  margin={{ top: 10, right: 10, left: 0, bottom: 20 }}
+                                  barGap={0}
                                 >
                                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={true} stroke="#e5e7eb" />
                                   <XAxis
@@ -1043,8 +1124,19 @@ function App() {
                                       );
                                     }}
                                     cursor={{ fill: 'transparent' }}
-                                    contentStyle={{ backgroundColor: '#1f2937', color: '#fff', borderRadius: '8px', border: 'none' }}
                                   />
+                                  {overlapIntervals.map(([start, end]) => (
+                                    <ReferenceArea
+                                      key={`overlap-${start}-${end}`}
+                                      x1={start}
+                                      x2={end}
+                                      fill="#ef4444"
+                                      fillOpacity={0.2}
+                                      stroke="#ef4444"
+                                      strokeOpacity={0.5}
+                                      strokeWidth={1}
+                                    />
+                                  ))}
                                   <Bar
                                     dataKey="range"
                                     shape={<GanttBar />}
