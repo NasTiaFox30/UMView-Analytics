@@ -104,9 +104,10 @@ const GanttBar = (props) => {
       <rect
         x={x}
         y={y}
-        width={Math.max(2, width)} // Мінімальна ширина 2px, щоб бачити дуже короткі сесії
+        width={Math.max(2, width)}
         height={height}
         fill={color}
+        fillOpacity={0.85}
         stroke="#fff"
         strokeWidth={1}
         rx={4}
