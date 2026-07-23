@@ -143,6 +143,8 @@ function App() {
   const [overlapStats, setOverlapStats] = useState({ totalOverlap: 0, details: [] });
   const [selectedOverlapDay, setSelectedOverlapDay] = useState(null);
   const [showModelA, setShowModelA] = useState(false);
+  const [fileError, setFileError] = useState('');
+  const [loadedFileName, setLoadedFileName] = useState('');
 
   // ============ ОБРОБКА ФАЙЛУ ============
   const handleFileUpload = useCallback((e) => {
@@ -650,6 +652,11 @@ function App() {
                 </button>
               ))}
             </div>
+            {(loadedFileName || fileError) && (
+              <div className={`rounded-lg border px-3 py-2 text-[11px] ${fileError ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-100 text-blue-700'}`}>
+                {fileError ? `Błąd pliku: ${fileError}` : `Wczytano: ${loadedFileName}`}
+              </div>
+            )}
             <label className="flex items-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-lg cursor-pointer hover:bg-blue-700 transition font-medium text-xs shadow-sm">
               <UploadCloud size={16} />
               <span>Prześlij CSV</span>
