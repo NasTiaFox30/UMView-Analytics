@@ -137,6 +137,7 @@ function App() {
   const [weeklyStats, setWeeklyStats] = useState([]);
   const [hourlyHeatmap, setHourlyHeatmap] = useState([]);
   const [monthAreas, setMonthAreas] = useState([]);
+  const [timelineMonthAreas, setTimelineMonthAreas] = useState([]);
   const [pivotState, setPivotState] = useState(null);
   const [sessionDurations, setSessionDurations] = useState([]);
   const [timelineData, setTimelineData] = useState([]);
@@ -801,7 +802,7 @@ function App() {
                         <Tooltip contentStyle={{ fontSize: 11, backgroundColor: '#1f2937', color: '#fff', borderRadius: 8, border: 'none' }} />
                         <Area type="monotone" dataKey="hours" fill="#10b981" stroke="#059669" fillOpacity={0.3} />
                         {/* Межі місяців */}
-                        {monthAreas.slice(1).map((area, idx) => (
+                        {timelineMonthAreas.slice(1).map((area, idx) => (
                           <ReferenceLine key={`month-line-${idx}`} x={area.startX} stroke="#9ca3af" strokeDasharray="3 3" strokeWidth={1} />
                         ))}
                         {/* Oznaczenie dnia szczytowego */}
