@@ -1,32 +1,74 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  ReferenceArea, ReferenceLine, ReferenceDot, LineChart, Line, ComposedChart, Scatter, ScatterChart,
-  Legend, Area
+  ReferenceArea, ReferenceLine, ReferenceDot, ComposedChart, Area
 } from 'recharts';
 import {
   UploadCloud, Clock, Calendar, TrendingUp, LayoutDashboard, Calculator,
   Compass, Activity, Zap, BarChart3, Layers, GitBranch,
-  Info, Server, Cloud, AlertCircle, ChevronUp, ChevronDown, Maximize2
+  Info, Server, Cloud, AlertCircle, ChevronUp, ChevronDown
 } from 'lucide-react';
 import DataModelSimulator from './DataModelSimulator';
 import NoDataModelSimulator from './NoDataModelSimulator';
 
-// ============ ДОПОМІЖНІ ФУНКЦІЇ ============
-const parseDateTime = (str) => {
-  if (!str) return null;
-  const parts = str.trim().split(' ');
-  if (parts.length < 2) return null;
-  const dateParts = parts[0].split('.');
-  const timeParts = parts[1].split(':');
-  if (dateParts.length !== 3 || timeParts.length < 2) return null;
-  return new Date(
-    parseInt(dateParts[2], 10),
-    parseInt(dateParts[1], 10) - 1,
-    parseInt(dateParts[0], 10),
-    parseInt(timeParts[0], 10),
-    parseInt(timeParts[1], 10)
+// ============ FUNKCJE POMOCNICZE ============
+const HOUR_MS = 60 * 60 * 1000;
+
+// Założenie analityczne dla porównania z Modelem A.
+// Jeżeli harmonogram umowny ma inne godziny, zmień te dwie wartości.
+const MODEL_A_START_HOUR = 8;
+const MODEL_A_END_HOUR = 16;
+
+const isFiniteNumber = (value) => Number.isFinite(Number(value));
+
+const parseDateTime = (value) => {
+  if (!value) return null;
+  const match = String(value).trim().match(
+    /^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/
   );
+  if (!match) return null;
+
+  const [, day, month, year, hour, minute, second = '0'] = match;
+  const date = new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+    0
+  );
+
+  if (
+    date.getFullYear() !== Number(year) ||
+    date.getMonth() !== Number(month) - 1 ||
+    date.getDate() !== Number(day)
+  ) {
+    return null;
+  }
+  return date;
+};
+
+const parseDateOnly = (value) => {
+  if (!value) return null;
+  const match = String(value).trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (!match) return null;
+  const [, day, month, year] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const startOfDay = (date) => {
+  const result = new Date(date);
+  result.setHours(0, 0, 0, 0);
+  return result;
+};
+
+const endExclusiveDayForInterval = (endDate) => {
+  // Koniec przedziału jest wyłączny. Dzięki -1 ms sesja kończąca się o 00:00
+  // nie tworzy sztucznego kolejnego dnia aktywności.
+  return startOfDay(new Date(endDate.getTime() - 1));
 };
 
 const formatDate = (date) => {
@@ -36,51 +78,245 @@ const formatDate = (date) => {
   return `${dd}.${mm}.${yyyy}`;
 };
 
+const formatDateTime = (date) => {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '—';
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${formatDate(date)} ${hh}:${mm}`;
+};
+
 const DAY_NAMES = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb'];
 const MONTH_NAMES = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
 const DAY_ORDER = ['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb', 'Nd'];
 
-const fmtNum = (n) => {
-  if (n === undefined || n === null || !isFinite(n)) return '—';
-  return n.toFixed(1);
+const fmtNum = (value, digits = 1) => {
+  if (!isFiniteNumber(value)) return '—';
+  return Number(value).toLocaleString('pl-PL', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
 };
 
-const fmtPct = (n) => {
-  if (n === undefined || n === null || !isFinite(n)) return '—';
-  return (n * 100).toFixed(0) + '%';
+const fmtPct = (value, digits = 1) => {
+  if (!isFiniteNumber(value)) return '—';
+  return (Number(value) * 100).toLocaleString('pl-PL', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }) + '%';
 };
 
-const median = (arr) => {
-  if (!arr || arr.length === 0) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+const median = (values) => {
+  if (!Array.isArray(values) || values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
 };
 
-const stddev = (arr) => {
-  if (!arr || arr.length < 2) return 0;
-  const mean = arr.reduce((s, v) => s + v, 0) / arr.length;
-  return Math.sqrt(arr.reduce((s, v) => s + (v - mean) ** 2, 0) / (arr.length - 1));
+const stddev = (values) => {
+  if (!Array.isArray(values) || values.length < 2) return 0;
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
 };
 
-// Об'єднання інтервалів на одному дні
-const mergeIntervals = (intervals) => {
-  if (intervals.length === 0) return 0;
-  const sorted = intervals.sort((a, b) => a[0] - b[0]);
-  let total = 0;
-  let [start, end] = sorted[0];
-  for (let i = 1; i < sorted.length; i++) {
-    const [s, e] = sorted[i];
-    if (s <= end) {
-      end = Math.max(end, e);
+const normalizeHeader = (header) => String(header || '')
+  .replace(/^\uFEFF/, '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/\s+/g, ' ');
+
+const parseCsvRow = (line, delimiter) => {
+  const cells = [];
+  let current = '';
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (char === delimiter && !quoted) {
+      cells.push(current.trim());
+      current = '';
     } else {
-      total += (end - start) / (3600 * 1000);
-      [start, end] = [s, e];
+      current += char;
     }
   }
-  total += (end - start) / (3600 * 1000);
-  return total;
+  cells.push(current.trim());
+  return cells;
 };
+
+const detectDelimiter = (headerLine) => {
+  const candidates = [';', ',', '\t'];
+  return candidates
+    .map(delimiter => ({ delimiter, count: parseCsvRow(headerLine, delimiter).length }))
+    .sort((a, b) => b.count - a.count)[0].delimiter;
+};
+
+const decodeCsvBuffer = (buffer) => {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('windows-1250').decode(buffer);
+  }
+};
+
+const findHeaderIndex = (headers, exact = [], includes = []) => {
+  const exactIndex = headers.findIndex(header => exact.includes(header));
+  if (exactIndex !== -1) return exactIndex;
+  return headers.findIndex(header => includes.some(fragment => header.includes(fragment)));
+};
+
+const mergeIntervalRanges = (intervals) => {
+  if (!Array.isArray(intervals) || intervals.length === 0) return [];
+  const sorted = intervals
+    .filter(interval => interval && interval.length === 2 && interval[1] > interval[0])
+    .map(([start, end]) => [Number(start), Number(end)])
+    .sort((a, b) => a[0] - b[0]);
+
+  if (sorted.length === 0) return [];
+  const merged = [sorted[0]];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const [start, end] = sorted[index];
+    const last = merged[merged.length - 1];
+    if (start <= last[1]) {
+      last[1] = Math.max(last[1], end);
+    } else {
+      merged.push([start, end]);
+    }
+  }
+  return merged;
+};
+
+const sumIntervalHours = (intervals) => intervals.reduce(
+  (sum, [start, end]) => sum + (end - start) / HOUR_MS,
+  0
+);
+
+const splitIntervalByDay = (startDate, endDate, callback) => {
+  let cursor = new Date(startDate);
+  const end = new Date(endDate);
+  while (cursor < end) {
+    const dayStart = startOfDay(cursor);
+    const nextDay = new Date(dayStart);
+    nextDay.setDate(nextDay.getDate() + 1);
+    const partStart = Math.max(cursor.getTime(), dayStart.getTime());
+    const partEnd = Math.min(end.getTime(), nextDay.getTime());
+    if (partStart < partEnd) callback(new Date(partStart), new Date(partEnd), dayStart);
+    cursor = new Date(partEnd);
+  }
+};
+
+const buildMonthAreas = (rows) => {
+  if (!rows.length) return [];
+  const areas = [];
+  let currentMonth = rows[0].monthStr;
+  let startIndex = 0;
+
+  rows.forEach((row, index) => {
+    if (row.monthStr !== currentMonth) {
+      areas.push({
+        month: currentMonth,
+        startX: rows[startIndex].date,
+        endX: rows[index - 1].date,
+        isEven: areas.length % 2 === 0,
+      });
+      currentMonth = row.monthStr;
+      startIndex = index;
+    }
+  });
+
+  areas.push({
+    month: currentMonth,
+    startX: rows[startIndex].date,
+    endX: rows[rows.length - 1].date,
+    isEven: areas.length % 2 === 0,
+  });
+  return areas;
+};
+
+const calculateConcurrentSegments = (intervals, minimumConcurrency = 2) => {
+  const events = [];
+  intervals.forEach(({ start, end }) => {
+    if (start instanceof Date && end instanceof Date && end > start) {
+      events.push({ time: start.getTime(), delta: 1 });
+      events.push({ time: end.getTime(), delta: -1 });
+    }
+  });
+  events.sort((a, b) => a.time - b.time);
+
+  const segments = [];
+  let active = 0;
+  let previousTime = null;
+  let index = 0;
+
+  while (index < events.length) {
+    const time = events[index].time;
+    if (previousTime !== null && time > previousTime && active >= minimumConcurrency) {
+      segments.push({ start: previousTime, end: time, concurrency: active });
+    }
+
+    let delta = 0;
+    while (index < events.length && events[index].time === time) {
+      delta += events[index].delta;
+      index += 1;
+    }
+    active += delta;
+    previousTime = time;
+  }
+  return segments;
+};
+
+const calculateOverlapSummary = (sessions) => {
+  const segments = calculateConcurrentSegments(sessions.map(session => ({
+    start: session.startDate,
+    end: session.stopDate,
+  })));
+
+  const byDate = {};
+  segments.forEach(segment => {
+    splitIntervalByDay(new Date(segment.start), new Date(segment.end), (partStart, partEnd, dayStart) => {
+      const key = formatDate(dayStart);
+      if (!byDate[key]) {
+        byDate[key] = { date: key, intervals: [], maxConcurrency: 2 };
+      }
+      byDate[key].intervals.push([partStart.getTime(), partEnd.getTime()]);
+      byDate[key].maxConcurrency = Math.max(byDate[key].maxConcurrency, segment.concurrency);
+    });
+  });
+
+  const details = Object.values(byDate)
+    .map((item, index) => {
+      const merged = mergeIntervalRanges(item.intervals);
+      return {
+        id: index + 1,
+        date: item.date,
+        overlapHours: sumIntervalHours(merged),
+        count: merged.length,
+        maxConcurrency: item.maxConcurrency,
+      };
+    })
+    .sort((a, b) => parseDateOnly(a.date) - parseDateOnly(b.date));
+
+  return {
+    totalOverlap: segments.reduce((sum, segment) => sum + (segment.end - segment.start) / HOUR_MS, 0),
+    details,
+  };
+};
+
+const intersectHours = (intervals, windowStart, windowEnd) => intervals.reduce((sum, [start, end]) => {
+  const overlapStart = Math.max(start, windowStart);
+  const overlapEnd = Math.min(end, windowEnd);
+  return sum + (overlapEnd > overlapStart ? (overlapEnd - overlapStart) / HOUR_MS : 0);
+}, 0);
 
 // ============ КОМПОНЕНТ GANTT BAR DLA SCATTER ============
 const GanttBar = (props) => {
@@ -147,403 +383,294 @@ function App() {
   const [fileError, setFileError] = useState('');
   const [loadedFileName, setLoadedFileName] = useState('');
 
-  // ============ ОБРОБКА ФАЙЛУ ============
-  const handleFileUpload = useCallback((e) => {
-    const file = e.target.files[0];
+  // ============ WCZYTYWANIE I ANALIZA CSV ============
+  const handleFileUpload = useCallback((event) => {
+    const file = event.target.files?.[0];
     if (!file) return;
 
+    setFileError('');
+    setLoadedFileName(file.name);
+
     const reader = new FileReader();
-    reader.onload = (event) => {
-      const buffer = event.target.result;
-      let text;
+    reader.onerror = () => setFileError('Nie udało się odczytać pliku.');
+    reader.onload = (loadEvent) => {
       try {
-        text = new TextDecoder('windows-1250').decode(buffer);
-      } catch {
-        text = new TextDecoder('utf-8').decode(buffer);
-      }
+        const text = decodeCsvBuffer(loadEvent.target.result);
+        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (lines.length < 2) throw new Error('Plik nie zawiera rekordów danych.');
 
-      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-      if (lines.length < 2) return;
+        const delimiter = detectDelimiter(lines[0]);
+        const headers = parseCsvRow(lines[0], delimiter).map(normalizeHeader);
 
-      const delimiter = lines[0].includes(';') ? ';' : ',';
-      const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase());
+        const startIndex = findHeaderIndex(headers, ['start date', 'start_date'], ['uruchomienie', 'start']);
+        const stopIndex = findHeaderIndex(headers, ['stop date', 'stop_date'], ['zakonczenie', 'stop']);
+        const hoursIndex = findHeaderIndex(headers, ['godziny', 'hours', 'czas'], ['godzin', 'hours']);
+        const userIndex = findHeaderIndex(headers, ['uruchamiajacy', 'user', 'kto'], ['uruchamiaj']);
+        const reasonIndex = findHeaderIndex(headers, ['powod', 'komentarz', 'comment', 'uwagi'], ['powod', 'komentarz', 'comment']);
 
-      const findIndex = (keywords) => headers.findIndex(h => keywords.some(k => h.includes(k)));
-      const startIndex = findIndex(['start date', 'start_date', 'uruchomienie']);
-      const stopIndex = findIndex(['stop date', 'stop_date', 'zakończenie']);
-      const dateIndex = findIndex(['data', 'date']);
-      const hoursIndex = findIndex(['godziny', 'hours', 'czas']);
-      const userIndex = findIndex(['uruchamiający', 'uruchamiaj', 'user', 'kto']);
-      const reasonIndex = findIndex(['powód', 'powod', 'komentarz', 'uwagi']);
-
-      const rawSessions = [];
-      const allDurations = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        const cells = lines[i].split(delimiter).map(c => c.replace(/^"|"$/g, '').trim());
-        if (cells.length < 2) continue;
-
-        const rawStartDate = startIndex !== -1 ? cells[startIndex] : '';
-        const rawStopDate = stopIndex !== -1 ? cells[stopIndex] : '';
-        const rawDate = dateIndex !== -1 ? cells[dateIndex] : '';
-        const rawHours = hoursIndex !== -1 ? cells[hoursIndex] : '0';
-        const parsedHours = parseFloat(rawHours.replace(',', '.')) || 0;
-        const user = userIndex !== -1 ? cells[userIndex] : 'Nieznany';
-        const reason = reasonIndex !== -1 ? cells[reasonIndex] : '';
-
-        let sessionDateStr = rawDate;
-        let sessionHours = parsedHours;
-        let startDateObj = null;
-        let stopDateObj = null;
-
-        // Пріоритет: якщо є start/stop – використовуємо їх
-        if (rawStartDate && rawStopDate) {
-          const startDate = parseDateTime(rawStartDate);
-          const endDate = parseDateTime(rawStopDate);
-          if (startDate && endDate && endDate > startDate) {
-            startDateObj = startDate;
-            stopDateObj = endDate;
-            sessionDateStr = formatDate(startDate);
-            sessionHours = (endDate - startDate) / (3600 * 1000);
-          }
+        if (startIndex === -1 || stopIndex === -1) {
+          throw new Error('Nie znaleziono kolumn „Start date” i „Stop date”.');
         }
 
-        // Якщо немає start/stop, але є rawDate і parsedHours – будуємо умовний інтервал
-        if (!startDateObj && rawDate) {
-          const dateParts = rawDate.split(' ');
-          if (dateParts.length === 2) {
-            const d = parseDateTime(rawDate);
-            if (d) {
-              startDateObj = d;
-              stopDateObj = new Date(d.getTime() + parsedHours * 3600 * 1000);
-              sessionDateStr = formatDate(d);
-              sessionHours = parsedHours;
-            }
-          } else {
-            const d = new Date(rawDate.split('.').reverse().join('-'));
-            if (!isNaN(d)) {
-              startDateObj = new Date(d);
-              startDateObj.setHours(0, 0, 0, 0);
-              stopDateObj = new Date(startDateObj.getTime() + parsedHours * 3600 * 1000);
-              sessionDateStr = formatDate(startDateObj);
-              sessionHours = parsedHours;
-            }
-          }
-        }
+        const rawSessions = [];
+        for (let rowIndex = 1; rowIndex < lines.length; rowIndex += 1) {
+          const cells = parseCsvRow(lines[rowIndex], delimiter);
+          const rawStart = cells[startIndex] || '';
+          const rawStop = cells[stopIndex] || '';
+          const startDate = parseDateTime(rawStart);
+          const stopDate = parseDateTime(rawStop);
 
-        if (sessionDateStr && sessionHours > 0 && startDateObj && stopDateObj) {
-          const dateParts = sessionDateStr.split('.');
-          let dayName = '', monthStr = '', dateObj = null;
-          if (dateParts.length === 3) {
-            dateObj = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
-            dayName = DAY_NAMES[dateObj.getDay()];
-            monthStr = MONTH_NAMES[parseInt(dateParts[1], 10) - 1];
-          }
-          const h = parseFloat(sessionHours.toFixed(2));
+          // Pomijamy wiersze podsumowania („Razem”) i rekordy bez poprawnego start/stop.
+          if (!startDate || !stopDate || stopDate <= startDate) continue;
+
+          const rawHours = hoursIndex !== -1 ? cells[hoursIndex] || '' : '';
+          const sourceHours = Number.parseFloat(String(rawHours).replace(',', '.'));
+          const calculatedHours = (stopDate - startDate) / HOUR_MS;
+          const startDay = startOfDay(startDate);
+
           rawSessions.push({
-            date: sessionDateStr,
-            hours: h,
-            user,
-            reason,
-            dayName,
-            monthStr,
-            dateObj,
-            startDate: startDateObj,
-            stopDate: stopDateObj,
+            id: rawSessions.length + 1,
+            date: formatDate(startDate),
+            hours: calculatedHours,
+            sourceHours: Number.isFinite(sourceHours) ? sourceHours : null,
+            user: userIndex !== -1 && cells[userIndex] ? cells[userIndex] : 'Nieznany',
+            reason: reasonIndex !== -1 && cells[reasonIndex] ? cells[reasonIndex] : '',
+            dayName: DAY_NAMES[startDay.getDay()],
+            monthStr: MONTH_NAMES[startDay.getMonth()],
+            dateObj: startDay,
+            startDate,
+            stopDate,
           });
-          allDurations.push(h);
         }
-      }
 
-      // ====== ОБЧИСЛЕННЯ АКТИВНИХ ГОДИН НА ДЕНЬ ======
-      const dailyMap = {};
+        if (rawSessions.length === 0) {
+          throw new Error('Nie znaleziono poprawnych sesji start–stop.');
+        }
+        rawSessions.sort((a, b) => a.startDate - b.startDate);
 
-      rawSessions.forEach(s => {
-        if (!s.startDate || !s.stopDate) return;
-        let start = new Date(s.startDate);
-        let end = new Date(s.stopDate);
-        const dayStartMs = new Date(start);
-        dayStartMs.setHours(0, 0, 0, 0);
-        const dayEndMs = new Date(dayStartMs);
-        dayEndMs.setDate(dayEndMs.getDate() + 1);
-
-        while (start < end) {
-          const dayKey = formatDate(start);
-          const clipStart = Math.max(start.getTime(), dayStartMs.getTime());
-          const clipEnd = Math.min(end.getTime(), dayEndMs.getTime());
-          if (clipStart < clipEnd) {
-            if (!dailyMap[dayKey]) {
-              dailyMap[dayKey] = { unionIntervals: [], otherHours: 0, total: 0, reasons: [], users: new Set() };
+        // ----- Aktywny czas bez podwójnego liczenia -----
+        const dailyMap = {};
+        rawSessions.forEach(session => {
+          splitIntervalByDay(session.startDate, session.stopDate, (partStart, partEnd, dayStart) => {
+            const key = formatDate(dayStart);
+            if (!dailyMap[key]) {
+              dailyMap[key] = { intervals: [], reasons: [], users: new Set(), dateObj: dayStart };
             }
-            dailyMap[dayKey].unionIntervals.push([clipStart, clipEnd]);
-            dailyMap[dayKey].users.add(s.user);
-            if (s.reason && !dailyMap[dayKey].reasons.includes(s.reason)) {
-              dailyMap[dayKey].reasons.push(s.reason);
+            dailyMap[key].intervals.push([partStart.getTime(), partEnd.getTime()]);
+            dailyMap[key].users.add(session.user);
+            if (session.reason && !dailyMap[key].reasons.includes(session.reason)) {
+              dailyMap[key].reasons.push(session.reason);
             }
-          }
-          start = new Date(dayEndMs);
-          dayStartMs.setDate(dayStartMs.getDate() + 1);
-          dayEndMs.setDate(dayEndMs.getDate() + 1);
-        }
-      });
-
-      rawSessions.forEach(s => {
-        if (!s.startDate || !s.stopDate) {
-          const dayKey = s.date;
-          if (!dailyMap[dayKey]) {
-            dailyMap[dayKey] = { unionIntervals: [], otherHours: 0, total: 0, reasons: [], users: new Set() };
-          }
-          dailyMap[dayKey].otherHours += s.hours;
-          dailyMap[dayKey].users.add(s.user);
-          if (s.reason && !dailyMap[dayKey].reasons.includes(s.reason)) {
-            dailyMap[dayKey].reasons.push(s.reason);
-          }
-        }
-      });
-
-      Object.keys(dailyMap).forEach(date => {
-        const day = dailyMap[date];
-        day.unionHours = mergeIntervals(day.unionIntervals);
-        day.total = day.unionHours + day.otherHours;
-      });
-
-      const formattedData = Object.keys(dailyMap).map(date => {
-        const day = dailyMap[date];
-        const dateParts = date.split('.');
-        const dateObj = new Date(dateParts[2], dateParts[1] - 1, dateParts[0]);
-        const dayName = DAY_NAMES[dateObj.getDay()];
-        const monthStr = MONTH_NAMES[parseInt(dateParts[1], 10) - 1];
-        return {
-          date,
-          hours: day.total,
-          unionHours: day.unionHours,
-          otherHours: day.otherHours,
-          dayName,
-          monthStr,
-          dateObj,
-          reason: day.reasons.join(' | '),
-          user: Array.from(day.users).join(', '),
-        };
-      }).sort((a, b) => a.dateObj - b.dateObj);
-
-      // ====== ПОДАЛЬШІ ОБЧИСЛЕННЯ ======
-      const mAreas = [];
-      let currentMonthStr = null;
-      let startIdx = 0;
-      formattedData.forEach((d, idx) => {
-        if (d.monthStr !== currentMonthStr) {
-          if (currentMonthStr !== null) {
-            mAreas.push({
-              month: currentMonthStr,
-              startX: formattedData[startIdx].date,
-              endX: formattedData[idx - 1].date,
-              isEven: mAreas.length % 2 === 0
-            });
-          }
-          currentMonthStr = d.monthStr;
-          startIdx = idx;
-        }
-      });
-      if (currentMonthStr !== null && formattedData.length > 0) {
-        mAreas.push({
-          month: currentMonthStr,
-          startX: formattedData[startIdx].date,
-          endX: formattedData[formattedData.length - 1].date,
-          isEven: mAreas.length % 2 === 0
+          });
         });
-      }
 
-      const daysTotals = { Pn: 0, Wt: 0, Śr: 0, Cz: 0, Pt: 0, Sb: 0, Nd: 0 };
-      formattedData.forEach(d => { if (d.dayName && daysTotals[d.dayName] !== undefined) daysTotals[d.dayName] += d.hours; });
-      const weeklyArr = DAY_ORDER.map(day => ({ day, hours: parseFloat(daysTotals[day].toFixed(2)) }));
+        const formattedData = Object.entries(dailyMap)
+          .map(([date, day]) => {
+            const mergedIntervals = mergeIntervalRanges(day.intervals);
+            return {
+              date,
+              hours: sumIntervalHours(mergedIntervals),
+              unionHours: sumIntervalHours(mergedIntervals),
+              otherHours: 0,
+              intervals: mergedIntervals,
+              dayName: DAY_NAMES[day.dateObj.getDay()],
+              monthStr: MONTH_NAMES[day.dateObj.getMonth()],
+              dateObj: day.dateObj,
+              reason: day.reasons.join(' | '),
+              user: Array.from(day.users).join(', '),
+            };
+          })
+          .sort((a, b) => a.dateObj - b.dateObj);
 
-      const heatmapData = {};
-      DAY_ORDER.forEach(day => { heatmapData[day] = {}; for (let h = 0; h < 24; h++) heatmapData[day][h] = 0; });
+        const firstDay = startOfDay(rawSessions[0].startDate);
+        const latestStop = rawSessions.reduce(
+          (latest, session) => session.stopDate > latest ? session.stopDate : latest,
+          rawSessions[0].stopDate
+        );
+        const lastDay = endExclusiveDayForInterval(latestStop);
 
-      rawSessions.forEach(s => {
-        if (s.startDate && s.stopDate && s.dayName) {
-          const startHour = s.startDate.getHours() + s.startDate.getMinutes() / 60;
-          const endHour = s.stopDate.getHours() + s.stopDate.getMinutes() / 60;
-          if (endHour <= startHour) return;
-          const totalDuration = endHour - startHour;
-          for (let h = Math.floor(startHour); h < Math.ceil(endHour); h++) {
-            const hourStart = Math.max(startHour, h);
-            const hourEnd = Math.min(endHour, h + 1);
-            const fraction = Math.max(0, hourEnd - hourStart);
-            if (fraction > 0 && heatmapData[s.dayName] && heatmapData[s.dayName][h] !== undefined) {
-              heatmapData[s.dayName][h] += s.hours * (fraction / totalDuration);
-            }
-          }
+        // Pełna oś czasu – również dni bez aktywności.
+        const timeline = [];
+        for (let cursor = new Date(firstDay); cursor <= lastDay; cursor.setDate(cursor.getDate() + 1)) {
+          const date = formatDate(cursor);
+          const activeDay = dailyMap[date];
+          const mergedIntervals = activeDay ? mergeIntervalRanges(activeDay.intervals) : [];
+          timeline.push({
+            date,
+            hours: sumIntervalHours(mergedIntervals),
+            dayName: DAY_NAMES[cursor.getDay()],
+            monthStr: MONTH_NAMES[cursor.getMonth()],
+            dateObj: new Date(cursor),
+          });
         }
-      });
 
-      const heatmapArr = DAY_ORDER.flatMap(day =>
-        Array.from({ length: 24 }, (_, h) => ({
+        // ----- Profil tygodnia -----
+        const daysTotals = Object.fromEntries(DAY_ORDER.map(day => [day, 0]));
+        formattedData.forEach(day => { daysTotals[day.dayName] += day.hours; });
+        const weeklyArr = DAY_ORDER.map(day => ({ day, hours: daysTotals[day] }));
+
+        // ----- Heatmap: dzielenie wielodniowych sesji + brak dubli -----
+        const heatmapData = Object.fromEntries(
+          DAY_ORDER.map(day => [day, Object.fromEntries(Array.from({ length: 24 }, (_, hour) => [hour, 0]))])
+        );
+        formattedData.forEach(day => {
+          day.intervals.forEach(([intervalStart, intervalEnd]) => {
+            const dayStartMs = day.dateObj.getTime();
+            const startHour = (intervalStart - dayStartMs) / HOUR_MS;
+            const endHour = (intervalEnd - dayStartMs) / HOUR_MS;
+            for (let hour = Math.floor(startHour); hour < Math.ceil(endHour); hour += 1) {
+              if (hour < 0 || hour > 23) continue;
+              const partStart = Math.max(startHour, hour);
+              const partEnd = Math.min(endHour, hour + 1);
+              if (partEnd > partStart) heatmapData[day.dayName][hour] += partEnd - partStart;
+            }
+          });
+        });
+        const heatmapArr = DAY_ORDER.flatMap(day =>
+          Array.from({ length: 24 }, (_, hour) => ({
+            day,
+            hour,
+            value: heatmapData[day][hour],
+          }))
+        );
+
+        // ----- Współbieżność liczona jako unikalny czas z >=2 sesjami -----
+        const overlap = calculateOverlapSummary(rawSessions);
+
+        // ----- Pivot: aktywny czas bez podwójnego liczenia -----
+        const activeMonths = MONTH_NAMES.filter(month => formattedData.some(day => day.monthStr === month));
+        const pivot = Object.fromEntries(DAY_ORDER.map(day => [
           day,
-          hour: h,
-          value: parseFloat((heatmapData[day][h] || 0).toFixed(2))
-        }))
-      );
+          { total: 0, ...Object.fromEntries(activeMonths.map(month => [month, 0])) },
+        ]));
+        const colTotals = { total: 0, ...Object.fromEntries(activeMonths.map(month => [month, 0])) };
 
-      const timeline = formattedData.map(d => ({
-        date: d.date,
-        hours: d.hours,
-        dayName: d.dayName,
-        monthStr: d.monthStr
-      }));
-
-      // Перекриття сесій
-      let totalOverlap = 0;
-      const overlapDetails = [];
-      for (let i = 0; i < rawSessions.length; i++) {
-        const a = rawSessions[i];
-        if (!a.startDate || !a.stopDate) continue;
-        for (let j = i + 1; j < rawSessions.length; j++) {
-          const b = rawSessions[j];
-          if (!b.startDate || !b.stopDate) continue;
-          const overlapStart = Math.max(a.startDate.getTime(), b.startDate.getTime());
-          const overlapEnd = Math.min(a.stopDate.getTime(), b.stopDate.getTime());
-          if (overlapStart < overlapEnd) {
-            const overlapHours = (overlapEnd - overlapStart) / (3600 * 1000);
-            totalOverlap += overlapHours;
-            const overlapDate = new Date(overlapStart);
-            const dateStr = formatDate(overlapDate);
-            overlapDetails.push({
-              sessionA: i + 1,
-              sessionB: j + 1,
-              overlapHours: parseFloat(overlapHours.toFixed(2)),
-              day: a.dayName || '—',
-              date: dateStr,
-              overlapStart: overlapStart
-            });
-          }
-        }
-      }
-
-      const overlapByDate = {};
-      overlapDetails.forEach(item => {
-        const dateKey = item.date;
-        if (!overlapByDate[dateKey]) {
-          overlapByDate[dateKey] = { date: dateKey, totalOverlapHours: 0, count: 0 };
-        }
-        overlapByDate[dateKey].totalOverlapHours += item.overlapHours;
-        overlapByDate[dateKey].count += 1;
-      });
-
-      const overlapDisplay = Object.values(overlapByDate)
-        .map((item, idx) => ({
-          id: idx + 1,
-          date: item.date,
-          overlapHours: parseFloat(item.totalOverlapHours.toFixed(2)),
-          count: item.count,
-        }))
-        .sort((a, b) => a.date.localeCompare(b.date));
-
-      // Pivot table
-      const activeMonthsSet = new Set();
-      formattedData.forEach(d => { if (d.monthStr) activeMonthsSet.add(d.monthStr); });
-      const activeMonths = MONTH_NAMES.filter(m => activeMonthsSet.has(m));
-
-      const pivot = {};
-      DAY_ORDER.forEach(day => {
-        pivot[day] = { total: 0 };
-        activeMonths.forEach(m => pivot[day][m] = 0);
-      });
-      const colTotals = { total: 0 };
-      activeMonths.forEach(m => colTotals[m] = 0);
-
-      formattedData.forEach(d => {
-        if (d.dayName && d.monthStr && pivot[d.dayName]) {
-          pivot[d.dayName][d.monthStr] += d.hours;
-        }
-      });
-
-      let maxGridVal = 0, maxRowTotal = 0, maxColTotal = 0;
-      DAY_ORDER.forEach(day => {
-        let rTotal = 0;
-        activeMonths.forEach(m => {
-          const val = pivot[day][m];
-          rTotal += val;
-          colTotals[m] += val;
-          if (val > maxGridVal) maxGridVal = val;
+        formattedData.forEach(day => {
+          pivot[day.dayName][day.monthStr] += day.hours;
         });
-        pivot[day].total = rTotal;
-        colTotals.total += rTotal;
-        if (rTotal > maxRowTotal) maxRowTotal = rTotal;
-      });
-      activeMonths.forEach(m => { if (colTotals[m] > maxColTotal) maxColTotal = colTotals[m]; });
 
-      setPivotState({
-        months: activeMonths,
-        rows: DAY_ORDER,
-        data: pivot,
-        colTotals,
-        maxGridVal,
-        maxRowTotal,
-        maxColTotal
-      });
+        let maxGridVal = 0;
+        let maxRowTotal = 0;
+        DAY_ORDER.forEach(day => {
+          activeMonths.forEach(month => {
+            const value = pivot[day][month];
+            pivot[day].total += value;
+            colTotals[month] += value;
+            maxGridVal = Math.max(maxGridVal, value);
+          });
+          colTotals.total += pivot[day].total;
+          maxRowTotal = Math.max(maxRowTotal, pivot[day].total);
+        });
+        const maxColTotal = Math.max(...activeMonths.map(month => colTotals[month]), 0);
 
-      // ====== ФІНАЛЬНІ СТАТИСТИКИ ======
-      const allHours = formattedData.map(d => d.hours);
-      const total = allHours.reduce((s, v) => s + v, 0);
-      const sumHours = rawSessions.reduce((s, v) => s + v.hours, 0);
-      const avg = allHours.length > 0 ? total / allHours.length : 0;
-      const med = median(allHours);
-      const std = stddev(allHours);
-      const activeDays = formattedData.length;
-      const totalSessions = rawSessions.length;
+        // ----- Statystyki sesji (nie dni!) -----
+        const sessionHours = rawSessions.map(session => session.hours);
+        const sumSessionHours = sessionHours.reduce((sum, hours) => sum + hours, 0);
+        const avgSessionHours = sumSessionHours / rawSessions.length;
+        const medianSessionHours = median(sessionHours);
+        const sessionStdDev = stddev(sessionHours);
+        const maxSession = rawSessions.reduce(
+          (max, session) => session.hours > max.hours ? session : max,
+          rawSessions[0]
+        );
 
-      let totalWorkingDays = 0;
-      if (formattedData.length > 0) {
-        const firstDate = new Date(formattedData[0].dateObj);
-        const lastDate = new Date(formattedData[formattedData.length - 1].dateObj);
-        firstDate.setHours(0, 0, 0, 0);
-        lastDate.setHours(0, 0, 0, 0);
-        let current = new Date(firstDate);
-        while (current <= lastDate) {
-          const dayOfWeek = current.getDay();
-          if (dayOfWeek >= 1 && dayOfWeek <= 5) totalWorkingDays++;
-          current.setDate(current.getDate() + 1);
-        }
-      }
+        const totalActiveHours = formattedData.reduce((sum, day) => sum + day.hours, 0);
+        const activeCalendarDays = formattedData.length;
+        const activeWorkingDays = formattedData.filter(day => {
+          const weekday = day.dateObj.getDay();
+          return weekday >= 1 && weekday <= 5;
+        }).length;
+        const totalWorkingDays = timeline.filter(day => {
+          const weekday = day.dateObj.getDay();
+          return weekday >= 1 && weekday <= 5;
+        }).length;
 
-      const potentialHours = totalWorkingDays * 8;
-      const utilRate = potentialHours > 0 ? total / potentialHours : 0;
-      const downtime = Math.max(0, potentialHours - total);
+        // ----- Model A: rzeczywiste przecięcie aktywności z oknem 08:00–16:00 -----
+        let usedInModelWindow = 0;
+        timeline.forEach(day => {
+          const weekday = day.dateObj.getDay();
+          if (weekday < 1 || weekday > 5) return;
+          const windowStart = new Date(day.dateObj);
+          windowStart.setHours(MODEL_A_START_HOUR, 0, 0, 0);
+          const windowEnd = new Date(day.dateObj);
+          windowEnd.setHours(MODEL_A_END_HOUR, 0, 0, 0);
+          const intervals = dailyMap[day.date] ? mergeIntervalRanges(dailyMap[day.date].intervals) : [];
+          usedInModelWindow += intersectHours(intervals, windowStart.getTime(), windowEnd.getTime());
+        });
 
-      const peakHours = Math.max(...allHours, 0);
+        const modelWindowHours = totalWorkingDays * (MODEL_A_END_HOUR - MODEL_A_START_HOUR);
+        const modelWindowUtilizationRate = modelWindowHours > 0 ? usedInModelWindow / modelWindowHours : 0;
+        const activeWorkingDayRate = totalWorkingDays > 0 ? activeWorkingDays / totalWorkingDays : 0;
+        const modelDowntime = Math.max(0, modelWindowHours - usedInModelWindow);
+        const outsideModelWindowHours = Math.max(0, totalActiveHours - usedInModelWindow);
+        const maxActiveDay = formattedData.reduce(
+          (max, day) => day.hours > max.hours ? day : max,
+          formattedData[0]
+        );
 
-      setData(formattedData);
-      setSessions(rawSessions);
-      setSessionDurations(allDurations);
-      setTimelineData(timeline);
-      setHourlyHeatmap(heatmapArr);
-      setOverlapStats({ totalOverlap, details: overlapDisplay });
-      if (overlapDisplay.length > 0) {
-        const maxOverlapDay = overlapDisplay.reduce((a, b) => a.overlapHours > b.overlapHours ? a : b);
-        setSelectedOverlapDay(maxOverlapDay.date);
-      } else {
+        setData(formattedData);
+        setSessions(rawSessions);
+        setSessionDurations(sessionHours);
+        setTimelineData(timeline);
+        setHourlyHeatmap(heatmapArr);
+        setOverlapStats(overlap);
+        setSelectedOverlapDay(overlap.details.length
+          ? overlap.details.reduce((max, day) => day.overlapHours > max.overlapHours ? day : max).date
+          : null);
+        setMonthAreas(buildMonthAreas(formattedData));
+        setTimelineMonthAreas(buildMonthAreas(timeline));
+        setWeeklyStats(weeklyArr);
+        setPivotState({
+          months: activeMonths,
+          rows: DAY_ORDER,
+          data: pivot,
+          colTotals,
+          maxGridVal,
+          maxRowTotal,
+          maxColTotal
+        });
+        setSummary({
+          totalSessions: rawSessions.length,
+          sumHours: sumSessionHours,
+          totalHours: totalActiveHours,
+          overlapHours: overlap.totalOverlap,
+          duplicateInstanceHours: Math.max(0, sumSessionHours - totalActiveHours),
+          avgSessionHours,
+          medianSessionHours,
+          sessionStdDev,
+          maxSession,
+          minSessionHours: Math.min(...sessionHours),
+          activeCalendarDays,
+          activeWorkingDays,
+          totalWorkingDays,
+          activeWorkingDayRate,
+          modelWindowHours,
+          usedInModelWindow,
+          modelWindowUtilizationRate,
+          modelDowntime,
+          outsideModelWindowHours,
+          maxActiveDay,
+          periodStart: firstDay,
+          periodEnd: lastDay,
+        });
+      } catch (error) {
+        setData([]);
+        setSessions([]);
+        setSummary(null);
+        setTimelineData([]);
+        setHourlyHeatmap([]);
+        setWeeklyStats([]);
+        setMonthAreas([]);
+        setTimelineMonthAreas([]);
+        setSessionDurations([]);
+        setOverlapStats({ totalOverlap: 0, details: [] });
         setSelectedOverlapDay(null);
+        setPivotState(null);
+        setFileError(error instanceof Error ? error.message : 'Nie udało się przeanalizować pliku.');
       }
-      setMonthAreas(mAreas);
-      setWeeklyStats(weeklyArr);
-      setSummary({
-        totalSessions,
-        totalHours: total,
-        sumHours,
-        overlapHours: totalOverlap,
-        avgHours: avg,
-        medianHours: med,
-        stdDev: std,
-        activeDays,
-        totalWorkingDays,
-        utilizationRate: utilRate,
-        peakHours,
-        downtime,
-        maxDay: formattedData.reduce((a, b) => a.hours > b.hours ? a : b, { date: '—', hours: 0 })
-      });
     };
     reader.readAsArrayBuffer(file);
+    event.target.value = '';
   }, []);
 
   // ============ МЕМО ДЛЯ ВІЗУАЛІЗАЦІЙ ============
@@ -579,16 +706,9 @@ function App() {
     return 'bg-blue-100 text-blue-900';
   };
 
-  const durationStats = useMemo(() => {
-    if (!sessionDurations.length) return { min: 0, q1: 0, q3: 0, max: 0 };
-    const sorted = [...sessionDurations].sort((a, b) => a - b);
-    return {
-      min: sorted[0],
-      q1: sorted[Math.floor(sorted.length * 0.25)] ?? sorted[0],
-      q3: sorted[Math.floor(sorted.length * 0.75)] ?? sorted[sorted.length - 1],
-      max: sorted[sorted.length - 1],
-    };
-  }, [sessionDurations]);
+  const heatmapMax = useMemo(() => (
+    Math.max(...hourlyHeatmap.map(item => item.value), 0.1)
+  ), [hourlyHeatmap]);
 
   // ============ КОМПОНЕНТ KPI КАРТКИ ============
   const KPICard = ({ icon: Icon, label, value, sub, color = 'blue', badge, tooltip }) => {
@@ -677,79 +797,87 @@ function App() {
                 {/* === ROW 0: KPI CARDS === */}
                 <div className="space-y-3">
                   {/* Główne metryki */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
-                    <KPICard icon={Activity} 
-                      label="Sesje" 
-                      value={summary.totalSessions} 
-                      sub={`${summary.activeDays} dni aktywnych`} 
-                      color="blue" 
-                      tooltip="W jednym dniu może występować >1 sesji – np. jeśli sesje nakładają się lub są uruchamiane przez różnych użytkowników."
+                  <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
+                    <KPICard
+                      icon={Activity}
+                      label="Sesje"
+                      value={summary.totalSessions}
+                      sub={`${summary.activeCalendarDays} dni kalendarzowych aktywnych`}
+                      color="blue"
+                      tooltip="Jedna sesja = jeden ciągły przedział start–stop. W jednym dniu może wystąpić więcej niż jedna sesja."
                     />
-                    {/* NOWA KARTA: Dni (aktywne / robocze) */}
                     <KPICard
                       icon={Calendar}
-                      label="Dni"
-                      value={`${summary.activeDays} / ${summary.totalWorkingDays}`}
-                      sub="aktywne / robocze"
+                      label="Dni robocze"
+                      value={`${summary.activeWorkingDays} / ${summary.totalWorkingDays}`}
+                      sub={`${fmtPct(summary.activeWorkingDayRate)} aktywnych`}
                       color="teal"
-                      tooltip="Liczba dni, w których odbywały się testy, na tle wszystkich dni roboczych (pn–pt) w analizowanym okresie."
+                      tooltip="Aktywne dni robocze / wszystkie dni robocze w analizowanym okresie. Dni weekendowe nie zwiększają licznika aktywnych dni roboczych."
                     />
                     <KPICard
                       icon={Clock}
                       label="Suma godzin sesji"
-                      value={fmtNum(summary.sumHours)}
-                      sub={`aktywny czas (bez nakładania): ${fmtNum(summary.totalHours)}h`}
+                      value={`${fmtNum(summary.sumHours)}h`}
+                      sub={`czas aktywny bez dubli: ${fmtNum(summary.totalHours)}h`}
                       color="green"
-                      tooltip="Suma godzin wszystkich sesji z logu – zgodna z wierszem „Razem” w raporcie. Aktywny czas = suma po usunięciu podwójnego liczenia nakładających się sesji."
+                      tooltip="Suma długości wszystkich sesji. Czas aktywny bez dubli jest liczony jako suma unii przedziałów czasowych."
                     />
                     <KPICard
                       icon={Layers}
-                      label="Nakładanie się sesji"
+                      label="Współbieżność"
                       value={`${fmtNum(summary.overlapHours)}h`}
-                      sub={summary.overlapHours > 0.05 ? 'potwierdzona współbieżność' : 'brak wykrytych nakładań'}
+                      sub={summary.overlapHours > 0.05 ? 'unikalny czas z ≥2 sesjami' : 'brak wykrytych przecięć'}
                       color={summary.overlapHours > 0.05 ? 'red' : 'gray'}
-                      tooltip="Godziny, w których działały jednocześnie ≥2 sesje (porównanie start/stop). Suma godzin sesji minus nakładanie = aktywny czas bez dubli."
+                      tooltip="Unikalny czas, w którym jednocześnie działały co najmniej dwie sesje. Nie jest to suma wszystkich par przecięć, więc nie zawyża wyniku przy 3+ sesjach."
                     />
-
-                    {/* TRZY NOWE KARTY: ŚREDNIA, MEDIANA, NAJDŁUŻSZA */}
                     <KPICard
                       icon={BarChart3}
                       label="Średnia sesja"
-                      value={`${fmtNum(summary.avgHours)}h`}
-                      sub={`z ${summary.totalSessions} sesji`}
+                      value={`${fmtNum(summary.avgSessionHours)}h`}
+                      sub={`σ = ${fmtNum(summary.sessionStdDev)}h`}
                       color="purple"
-                      tooltip="Średni czas trwania pojedynczej sesji."
+                      tooltip="Średnia liczona z długości pojedynczych sesji start–stop, a nie ze średniej aktywności dziennej."
                     />
                     <KPICard
                       icon={TrendingUp}
                       label="Mediana sesji"
-                      value={`${fmtNum(summary.medianHours)}h`}
+                      value={`${fmtNum(summary.medianSessionHours)}h`}
                       sub="wartość środkowa"
                       color="purple"
-                      tooltip="Mediana czasu sesji – typowy czas, niezakłócony przez ekstremalnie długie sesje."
+                      tooltip="Mediana długości pojedynczej sesji; jest odporna na skrajnie długie sesje."
                     />
-
-                    <KPICard 
-                      icon={Zap} 
-                      label="Szczyt" 
-                      value={`${fmtNum(summary.peakHours)}h`} 
-                      sub={`${summary.maxDay?.date || '—'}`} 
-                      color="orange" 
-                      tooltip="Najdłuższa sesja - dzień, w którym odnotowano najwięcej godzin aktywności."
+                    <KPICard
+                      icon={Zap}
+                      label="Najdłuższa sesja"
+                      value={`${fmtNum(summary.maxSession.hours)}h`}
+                      sub={formatDate(summary.maxSession.startDate)}
+                      color="orange"
+                      tooltip={`${formatDateTime(summary.maxSession.startDate)} → ${formatDateTime(summary.maxSession.stopDate)}${summary.maxSession.reason ? ` • ${summary.maxSession.reason}` : ''}`}
+                    />
+                    <KPICard
+                      icon={Cloud}
+                      label="Maks. aktywność dobowa"
+                      value={`${fmtNum(summary.maxActiveDay.hours)}h`}
+                      sub={summary.maxActiveDay.date}
+                      color="orange"
+                      tooltip="Maksymalny unikalny czas aktywności przypisany do jednego dnia kalendarzowego. To nie jest długość najdłuższej sesji."
                     />
                   </div>
 
-                  {/* Model A – porównanie (cykliczny) – domyślnie zwinięte */}
+                  {/* Model A – porównanie (cykliczny) */}
                   <div className="bg-gray-50/80 border border-gray-200 rounded-xl p-3">
-                    <div 
-                      className="flex items-center gap-2 cursor-pointer select-none" 
+                    <div
+                      className="flex items-center gap-2 cursor-pointer select-none"
                       onClick={() => setShowModelA(!showModelA)}
                     >
-                      <div className="h-4 w-1 bg-teal-500 rounded-full"></div>
+                      <div className="h-4 w-1 bg-teal-500 rounded-full" />
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                        Model A (cykliczny) – porównanie
+                        Model A – porównanie z oknem {String(MODEL_A_START_HOUR).padStart(2, '0')}:00–{String(MODEL_A_END_HOUR).padStart(2, '0')}:00
                       </span>
-                      <span className="relative inline-flex ml-1 cursor-help" title="Model A zakłada stałą dostępność środowiska przez 8 godzin każdego dnia roboczego (pn–pt), niezależnie od faktycznego użycia.">
+                      <span
+                        className="relative inline-flex ml-1 cursor-help"
+                        title="To założenie analityczne. Jeżeli harmonogram umowny ma inne godziny, zmień stałe MODEL_A_START_HOUR i MODEL_A_END_HOUR."
+                      >
                         <Info size={12} className="text-gray-400 hover:text-gray-600" />
                       </span>
                       <span className="ml-auto">
@@ -758,26 +886,42 @@ function App() {
                     </div>
                     {showModelA && (
                       <>
-                        <div className="grid grid-cols-2 gap-2 mt-2">
-                          <KPICard 
-                            icon={Calendar} 
-                            label="Wykorzystanie" 
-                            value={fmtPct(summary.utilizationRate)} 
-                            sub={`założenie: 8h/dzień roboczy`} 
-                            color="teal" 
-                            tooltip="% wykorzystania WZGLĘDEM założonego cyklicznego modelu (8h/dzień roboczy, pn–pt) – im niższy, tym większa potencjalna różnica względem On‑demand." 
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-2">
+                          <KPICard
+                            icon={Calendar}
+                            label="Aktywne dni robocze"
+                            value={fmtPct(summary.activeWorkingDayRate)}
+                            sub={`${summary.activeWorkingDays} z ${summary.totalWorkingDays} dni`}
+                            color="teal"
+                            tooltip="Udział dni roboczych, w których wystąpiła jakakolwiek aktywność. To wskaźnik dniowy, a nie godzinowy."
                           />
-                          <KPICard 
-                            icon={Cloud} 
-                            label="Przestoje" 
-                            value={fmtNum(summary.downtime)} 
-                            sub="godz. — hipotetyczny model cykliczny 8h/dzień" 
-                            color="gray" 
-                            tooltip="Godziny, które byłyby zmarnowane w cyklicznym modelu (8h/dzień roboczy) – hipotetyczne porównanie." 
+                          <KPICard
+                            icon={Clock}
+                            label="Wykorzystanie okna"
+                            value={fmtPct(summary.modelWindowUtilizationRate)}
+                            sub={`${fmtNum(summary.usedInModelWindow)} z ${fmtNum(summary.modelWindowHours)}h`}
+                            color="teal"
+                            tooltip="Aktywny czas będący przecięciem sesji z hipotetycznym oknem Modelu A / całkowity czas tego okna."
+                          />
+                          <KPICard
+                            icon={Cloud}
+                            label="Przestój w oknie"
+                            value={`${fmtNum(summary.modelDowntime)}h`}
+                            sub="czas okna bez realnej aktywności"
+                            color="gray"
+                            tooltip="Czas hipotetycznego okna Modelu A, który nie pokrywa się z żadną sesją. Godziny poza oknem nie pomniejszają tego wyniku."
+                          />
+                          <KPICard
+                            icon={AlertCircle}
+                            label="Aktywność poza oknem"
+                            value={`${fmtNum(summary.outsideModelWindowHours)}h`}
+                            sub="noce, weekendy lub godziny poza 08–16"
+                            color="red"
+                            tooltip="Unikalny czas aktywności, którego hipotetyczne okno Modelu A 08:00–16:00 nie obejmuje."
                           />
                         </div>
                         <p className="text-[9px] text-gray-400 mt-2">
-                          ⚠️ „Wykorzystanie” i „Przestoje” odnoszą się do hipotetycznego <strong>Modelu A (cyklicznego)</strong> – nie do faktycznie ponoszonego kosztu w obecnym modelu On‑demand.
+                          ⚠️ To porównanie operacyjne, nie bieżące rozliczenie kosztowe. Wynik zależy od przyjętego okna godzinowego.
                         </p>
                       </>
                     )}
@@ -791,7 +935,7 @@ function App() {
                       <TrendingUp size={14} className="text-green-500" />
                       Timeline aktywności
                     </h3>
-                    <span className="text-[9px] text-gray-400">{timelineData.length} dni</span>
+                    <span className="text-[9px] text-gray-400">{timelineData.length} dni kalendarzowych • {summary.activeCalendarDays} aktywnych</span>
                   </div>
                   <div className="h-44 w-full">
                     <ResponsiveContainer width="100%" height="100%">
@@ -806,18 +950,18 @@ function App() {
                           <ReferenceLine key={`month-line-${idx}`} x={area.startX} stroke="#9ca3af" strokeDasharray="3 3" strokeWidth={1} />
                         ))}
                         {/* Oznaczenie dnia szczytowego */}
-                        {summary?.maxDay?.date && (
+                        {summary?.maxActiveDay?.date && (
                           <>
-                            <ReferenceLine x={summary.maxDay.date} stroke="#f97316" strokeDasharray="5 5" strokeWidth={2} />
+                            <ReferenceLine x={summary.maxActiveDay.date} stroke="#f97316" strokeDasharray="5 5" strokeWidth={2} />
                             <ReferenceDot
-                              x={summary.maxDay.date}
-                              y={summary.maxDay.hours}
+                              x={summary.maxActiveDay.date}
+                              y={summary.maxActiveDay.hours}
                               r={6}
                               fill="#f97316"
                               stroke="#fff"
                               strokeWidth={2}
                               label={{
-                                value: 'szczyt',
+                                value: 'maks. dzień',
                                 position: 'top',
                                 fill: '#f97316',
                                 fontSize: 9,
@@ -831,7 +975,7 @@ function App() {
                     </ResponsiveContainer>
                   </div>
                   <p className="text-[9px] text-gray-400 mt-1">
-                    Linie pionowe = granice miesięcy • Pionowa linia i kropka = dzień szczytowy (najwięcej godzin)
+                    Oś zawiera również dni z 0h • Linie pionowe = granice miesięcy • znacznik = dzień z największą unikalną aktywnością
                   </p>
                 </div>
 
@@ -900,14 +1044,13 @@ function App() {
                           ))}
                           {DAY_ORDER.map(day => {
                             const dayData = hourlyHeatmap.filter(d => d.day === day);
-                            const maxVal = Math.max(...dayData.map(d => d.value), 0.1);
                             return (
                               <React.Fragment key={day}>
                                 <div className="text-[9px] font-medium text-gray-600 flex items-center justify-end pr-1">{day}</div>
                                 {Array.from({ length: 24 }, (_, hour) => {
                                   const entry = dayData.find(d => d.hour === hour);
                                   const val = entry ? entry.value : 0;
-                                  const intensity = maxVal > 0 ? Math.min(val / maxVal, 1) : 0;
+                                  const intensity = heatmapMax > 0 ? Math.min(val / heatmapMax, 1) : 0;
                                   const color = val === 0
                                     ? 'bg-gray-50'
                                     : intensity > 0.8 ? 'bg-blue-900'
@@ -934,7 +1077,7 @@ function App() {
                       </div>
                     </div>
                     <p className="text-[9px] text-gray-400 mt-2">
-                      Każda komórka = 1 godzina w danym dniu tygodnia • im ciemniejszy niebieski, tym większa aktywność
+                      Aktywność wielodniowa jest dzielona na właściwe dni i godziny • jedna wspólna skala kolorów dla całej heatmapy • przecięcia nie są liczone podwójnie
                     </p>
                   </div>
                 </div>
@@ -992,11 +1135,11 @@ function App() {
                     <div className="flex items-center justify-between mb-3">
                       <h3 className="text-[12px] font-semibold text-gray-700 flex items-center gap-1.5">
                         <GitBranch size={14} className="text-red-500" />
-                        Przecięcia sesji (realne)
+                        Przecięcia sesji
                       </h3>
                       <div className="text-right">
                         <span className="text-[9px] text-gray-400 block">
-                          łącznie {overlapStats.totalOverlap.toFixed(1)} godz. przecięć
+                          łącznie {fmtNum(overlapStats.totalOverlap)}h unikalnej współbieżności
                         </span>
                         {selectedOverlapDay && (() => {
                           const dayStart = new Date(selectedOverlapDay.split('.').reverse().join('-'));
@@ -1009,32 +1152,15 @@ function App() {
                             return s.startDate < dayEnd && s.stopDate > dayStart;
                           });
 
-                          const getOverlapIntervals = (sessions, dayStart, dayEnd) => {
-                            const intervals = sessions.map(s => {
-                              const start = Math.max(s.startDate.getTime(), dayStart.getTime());
-                              const end = Math.min(s.stopDate.getTime(), dayEnd.getTime());
-                              if (start >= end) return null;
-                              return [(start - dayStart.getTime()) / (3600 * 1000), (end - dayStart.getTime()) / (3600 * 1000)];
-                            }).filter(Boolean);
-
-                            const overlapIntervals = [];
-                            const step = 0.1;
-                            let inOverlap = false;
-                            let currentStart = 0;
-                            for (let t = 0; t < 24; t += step) {
-                              const coverCount = intervals.filter(([s, e]) => s <= t && t < e).length;
-                              if (coverCount >= 2 && !inOverlap) {
-                                inOverlap = true;
-                                currentStart = t;
-                              } else if ((coverCount < 2 || t >= 24 - step) && inOverlap) {
-                                inOverlap = false;
-                                overlapIntervals.push([Math.round(currentStart * 10) / 10, Math.round(t * 10) / 10]);
-                              }
-                            }
-                            return overlapIntervals;
-                          };
-
-                          const overlapIntervals = getOverlapIntervals(daySessions, dayStart, dayEnd);
+                          const overlapIntervals = calculateConcurrentSegments(
+                            daySessions.map(session => ({
+                              start: new Date(Math.max(session.startDate.getTime(), dayStart.getTime())),
+                              end: new Date(Math.min(session.stopDate.getTime(), dayEnd.getTime())),
+                            }))
+                          ).map(segment => [
+                            (segment.start - dayStart.getTime()) / HOUR_MS,
+                            (segment.end - dayStart.getTime()) / HOUR_MS,
+                          ]);
                           if (overlapIntervals.length === 0) return null;
 
                           const overlapHoursText = overlapIntervals.map(([s, e]) => {
@@ -1061,7 +1187,7 @@ function App() {
                         <div className="flex flex-wrap gap-1.5 mb-3">
                           {overlapStats.details.map((item) => (
                             <button
-                              key={item.date}
+                              key={`${item.date}-${item.id}`}
                               onClick={() => setSelectedOverlapDay(item.date)}
                               className={`text-[10px] px-2 py-1 rounded-lg border transition ${
                                 selectedOverlapDay === item.date
@@ -1101,32 +1227,15 @@ function App() {
                             return <div className="text-center text-gray-400 py-8">Brak sesji w tym dniu</div>;
                           }
 
-                          const getOverlapIntervals = (sessions, dayStart, dayEnd) => {
-                            const intervals = sessions.map(s => {
-                              const start = Math.max(s.startDate.getTime(), dayStart.getTime());
-                              const end = Math.min(s.stopDate.getTime(), dayEnd.getTime());
-                              if (start >= end) return null;
-                              return [(start - dayStart.getTime()) / (3600 * 1000), (end - dayStart.getTime()) / (3600 * 1000)];
-                            }).filter(Boolean);
-
-                            const overlapIntervals = [];
-                            const step = 0.1;
-                            let inOverlap = false;
-                            let currentStart = 0;
-                            for (let t = 0; t < 24; t += step) {
-                              const coverCount = intervals.filter(([s, e]) => s <= t && t < e).length;
-                              if (coverCount >= 2 && !inOverlap) {
-                                inOverlap = true;
-                                currentStart = t;
-                              } else if ((coverCount < 2 || t >= 24 - step) && inOverlap) {
-                                inOverlap = false;
-                                overlapIntervals.push([Math.round(currentStart * 10) / 10, Math.round(t * 10) / 10]);
-                              }
-                            }
-                            return overlapIntervals;
-                          };
-
-                          const overlapIntervals = getOverlapIntervals(daySessions, dayStart, dayEnd);
+                          const overlapIntervals = calculateConcurrentSegments(
+                            daySessions.map(session => ({
+                              start: new Date(Math.max(session.startDate.getTime(), dayStart.getTime())),
+                              end: new Date(Math.min(session.stopDate.getTime(), dayEnd.getTime())),
+                            }))
+                          ).map(segment => [
+                            (segment.start - dayStart.getTime()) / HOUR_MS,
+                            (segment.end - dayStart.getTime()) / HOUR_MS,
+                          ]);
 
                           return (
                             <div className="h-44 w-full relative">
